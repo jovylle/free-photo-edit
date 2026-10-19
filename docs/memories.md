@@ -19,3 +19,20 @@
   the pytest process — 13 tests 403'd. Fixtures now force
   `TURNSTILE_SECRET=""` (and SITEKEY in the config test). Any new
   env-gated behavior needs the same treatment in fixtures.
+
+## Session (2026-10-19) — device-keyed daily cap + pushed to GitHub
+- Repo now at git@github.com:jovylle/free-photo-edit.git (private, lab convention:
+  no .git existed before; .gitignore excludes .venv, storage, credits.db, .env).
+- Daily cap changed from per-IP 12/day to per-device (IP + UA sha256[:32],
+  `ua` column in jobs) 24/day — so friends on one WiFi share the IP but each
+  get their own bucket. Minute limit (3/min) and global 60/day unchanged.
+- UA is spoofable — deliberate generosity cap, not security; no per-IP hard
+  ceiling was added because the global 60/day bounds spend.
+- Tests: 59 pass (`api/test_abuse.py` has per-device bucket tests; _edit
+  helper sends explicit `"test-ua"` header, _seed/_dev helpers mirror
+  `_client_device`). Lesson: TestClient injects its own default UA unless
+  overridden — seeded rows must match same UA or the 429 never fires.
+- Live deploy validated: sync-live.sh → local/public 200; tokenless POST to
+  /api/edit 403s (Turnstile active, fail closed).
+- Privacy page promise note from 2026-10-18 still open: 7-day cleanup is a
+  manual command, no automatic deletion yet.
