@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Free Photo Edit — 1 photo, free</title>
+<link rel="stylesheet" href="site.css">
+<script>try { document.documentElement.dataset.theme = localStorage.getItem("fpe-theme") === "dark" ? "dark" : "light"; } catch (e) { document.documentElement.dataset.theme = "light"; }</script>
+<style>
+  * { box-sizing:border-box }
+  body { margin:0; background:var(--bg); color:var(--ink); font:16px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; }
+  header { display:flex; align-items:center; gap:12px; padding:14px 20px; border-bottom:1px solid var(--line); }
+  header h1 { font-size:18px; margin:0 }
+  header h1 small { color:var(--muted); font-weight:400 }
+  header nav { margin-left:auto; display:flex; gap:10px; align-items:center }
+  #creditsBadge { background:var(--chip); border:1px solid var(--line); border-radius:999px; padding:4px 14px; font-size:14px; }
+  main { max-width:700px; margin:0 auto; padding:20px; display:grid; gap:18px }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px }
+  .card h3 { margin:0 0 10px; font-size:15px }
+  #dropzone { border:2px dashed var(--line); border-radius:12px; padding:28px; text-align:center; color:var(--muted); cursor:pointer; }
+  #dropzone.over { border-color:var(--accent); color:var(--ink); }
+  #thumbs { display:flex; gap:10px; margin-top:12px; flex-wrap:wrap; justify-content:center }
+  #thumbs img { width:160px; height:160px; object-fit:cover; border-radius:8px; border:1px solid var(--line) }
+  .thumb { position:relative }
+  .thumb button { position:absolute; top:-8px; right:-8px; width:24px; height:24px; border-radius:50%; border:1px solid var(--line); background:#000; color:#fff; cursor:pointer }
+  textarea { width:100%; background:var(--input); color:var(--ink); border:1px solid var(--line); border-radius:8px; padding:10px; font:inherit; min-height:80px; resize:vertical }
+  .row { display:flex; gap:12px; align-items:center; flex-wrap:wrap }
+  .presets { display:flex; flex-wrap:wrap; gap:8px; margin:8px 0 12px }
+  .preset { border:1px solid var(--line); border-radius:999px; padding:6px 14px; cursor:pointer; background:var(--input); font-size:14px; white-space:nowrap }
+  .preset small { display:none }
+  .preset.active { border-color:var(--accent); background:var(--chip); }
+  .preset.active b { color:var(--accent); }
+  details.card summary { cursor:pointer; font-size:15px; font-weight:700 }
+  #editAnother { width:100%; background:transparent; border:1px dashed var(--line); color:var(--muted); border-radius:10px; padding:10px; cursor:pointer; font:inherit; font-size:14px; margin-top:4px }
+  #result { display:grid; gap:14px }
+  #submitBtn { background:var(--accent); border:0; border-radius:999px; padding:10px 28px; font-size:16px; font-weight:700; cursor:pointer; color:var(--onaccent) }
+  #submitBtn:disabled { opacity:.5; cursor:wait }
+  #status { min-height:1.5em; color:var(--muted); font-size:14px }
+  #status.error { color:var(--err) }
+  .hidden { display:none !important }
+  .field { display:grid; gap:6px; margin-bottom:12px }
+  .field label { font-size:13px; color:var(--muted) }
+  .muted { color:var(--muted); font-size:14px }
+  #history { display:grid; gap:14px }
+  .job { background:var(--input); border:1px solid var(--line); border-radius:10px; padding:12px; display:grid; gap:10px }
+  .job-head { display:flex; gap:10px; align-items:baseline; justify-content:space-between; flex-wrap:wrap }
+  .job-head b { font-size:14px }
+  .job-head small { color:var(--muted); font-size:12px }
+  .job-thumbs { display:flex; gap:8px; flex-wrap:wrap }
+  .job-thumbs img { width:72px; height:72px; object-fit:cover; border-radius:8px; border:1px solid var(--line) }
+  .job-spin { color:var(--accent); font-size:14px; margin:0 }
+  .job-fail { color:var(--err); font-size:14px; margin:0 }
+  .dl { background:transparent; border:1px solid var(--accent); color:var(--accent); border-radius:999px; padding:6px 18px; font-size:14px; text-decoration:none; display:inline-block; cursor:pointer; font-family:inherit }
+  .dl.solid { background:var(--accent); color:var(--onaccent); border:0; font-weight:700 }
+  .dl:disabled { opacity:.5; cursor:wait }
+  #donate { display:flex; gap:10px; flex-wrap:wrap; align-items:center }
+  #adslot { border:1px dashed var(--line); border-radius:10px; padding:14px; text-align:center; color:var(--muted); font-size:13px }
+</style>
+</head>
+<body>
+<header>
+  <h1>✨ Free Photo Edit <small>1 photo · 3 free/day</small></h1>
+  <nav><span id="creditsBadge" title="Edits remaining">credits left: …</span><button id="themeBtn" class="dl" type="button">🌙 Dark</button></nav>
+</header>
+<main>
+  <section class="card">
+    <div id="formBody">
+      <div id="dropzone" tabindex="0" role="button" aria-label="Drop 1 photo here or click to browse">
+        Drop 1 photo here, or click to browse
+        <input id="fileInput" class="hidden" type="file" accept="image/jpeg,image/png,image/webp">
+        <div id="thumbs"></div>
+      </div>
+      <p style="color:var(--muted);font-size:13px;margin:10px 0 0">1 photo (jpeg/png/webp, max 5MB). You can also paste (Ctrl+V) a screenshot.</p>
+      <div class="field" style="margin-top:12px">
+        <label for="prompt" id="promptLabel">Instruction</label>
+        <textarea id="prompt" rows="3" placeholder="e.g. gawing formal ID-style portrait, plain background"></textarea>
+        <div class="presets" id="presets" role="radiogroup" aria-label="Edit type"></div>
+      </div>
+      <div class="row" style="margin-top:4px">
+        <button id="submitBtn">Edit ✨</button>
+      </div>
+    </div>
+    <button id="editAnother" class="hidden" type="button">📷 Edit another photo…</button>
+    <div id="tsWidget" style="margin-top:10px"></div>
+    <div id="status" aria-live="polite"></div>
+    <div id="result" class="hidden" style="margin-top:12px"></div>
+  </section>
+
+  <details class="card">
+    <summary>Past edits <small id="histCount" style="color:var(--muted);font-weight:400"></small></summary>
+    <div id="history" style="margin-top:12px"><p class="muted">Loading…</p></div>
+  </details>
+
+  <section class="card" id="donateCard">
+    <h3>Support free edits</h3>
+    <div id="donate">
+      <details>
+        <summary style="cursor:pointer">💚 Donate via GCash — tap to show QR</summary>
+        <img id="gcashQr" src="gcash-qr.png" alt="GCash QR — scan to donate" style="width:190px;border-radius:10px;margin-top:10px" onerror="this.remove()">
+      </details>
+      <a class="dl" id="kofiLink" href="https://ko-fi.com/twe222" target="_blank" rel="noopener">☕ Ko-fi</a>
+    </div>
+    <p class="muted" style="margin:10px 0 0">Scan the QR with GCash, or tap Ko-fi — donations keep the free edits running. 🙏</p>
+    <div id="adslot" style="margin-top:12px">Ad slot — 1 placement (placeholder)</div>
+  </section>
+</main>
+<footer class="site-foot">
+  <a href="index.html">Home</a> · <a href="about.html">About</a> · <a href="privacy.html">Privacy</a> · <a href="terms.html">Terms</a> · <a href="https://ko-fi.com/twe222" target="_blank" rel="noopener">Ko-fi</a>
+</footer>
+<script src="site.js" defer></script>
+<script src="app.js?v=3"></script>
+</body>
+</html>
