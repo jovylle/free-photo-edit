@@ -1,5 +1,22 @@
 # free-photo-edit — session memories
 
+## Dev E2E verification (2026-11-08)
+- Automated: 87 API tests pass (temp DB/storage, fake provider). Contract
+  checks on the live dev URL: bad MIME 400, empty prompt 400, >5 photos 400,
+  unknown preset 400, oversize 400, out-of-credits 402 (verified on a local
+  FREE_CREDITS=1 instance; on dev the per-IP minute limit interferes).
+- Real-user browser run on dev passed: upload -> preset -> submit -> 202 ->
+  done, credit debit, comparison slider, download, history resume after
+  reload, IndexedDB draft restore, multi-photo (2 inputs on one job),
+  no-photo guard "Add a photo first."
+- Fake engine echoes the uploaded PNG (or a 1x1 PNG for non-PNG input), so it
+  proves plumbing only — never AI quality.
+- Fixed: missing favicon caused a 404 console error on every page (inline SVG
+  now, all four pages). Two apparent spacing bugs ("✅custom", "📷Edit
+  another") were emoji font rendering; the DOM strings have the space.
+- Housekeeping: an earlier `git add -A` swept Playwright logs and screenshots
+  into history; removed and added to .gitignore. Use explicit paths, not -A.
+
 ## Backup rehearsal + dev UI polish (2026-11-08)
 - Live backup taken read-only via `sqlite3 .backup` to
   `~/fore/services/free-photo-edit/backups/2026-11-08-pre-migration`
