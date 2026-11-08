@@ -1,8 +1,8 @@
-/* Free Photo Edit — 1-photo self-serve UI. No framework, no build step.
+/* Free Photo Edit — multi-photo self-serve UI. No framework, no build step.
  * Backend contract (same-origin /api/* only — no keys in browser):
  *   GET  /api/config -> {turnstile_sitekey} (null = bot check off, dev)
  *   GET  /api/presets -> {presets: [{id,label,hint}]}
- *   POST /api/edit  multipart(image x1, prompt, preset, user,
+ *   POST /api/edit  multipart(image x1–5, prompt, preset, user,
  *     cf-turnstile-response)
  *     -> 202 {job_id, status:running, credits_left} | 400 validation
  *        | 402 out of credits / IP cap | 403 bot check | 429 rate limit
@@ -15,7 +15,7 @@
  */
 (() => {
   "use strict";
-  const MAX_BYTES = 5 * 1024 * 1024;
+  const MAX_BYTES = 5 * 1024 * 1024, MAX_IMAGES = 5;
   const OK_TYPES = ["image/jpeg", "image/png", "image/webp"];
   const USER_KEY = "freephotoedit_user";
   const PROMPT_KEY = "freephotoedit_prompt";
@@ -30,16 +30,20 @@
         formBody = $("formBody"), editAnother = $("editAnother"),
         resultBox = $("result"), histCount = $("histCount");
 
-  let file = null;
+  let files = [];
+  let draftChanged = false;
+  let thumbUrls = [];
+  let draftWrites = Promise.resolve();
   let activePreset = "custom";
 
   const TS_ACTION = "edit";
   let tsWidgetId = null; // explicit render id (page stays alive: reset per try)
 
-  let user = localStorage.getItem(USER_KEY);
+  let user;
+  try { user = localStorage.getItem(USER_KEY); } catch (e) { /* private mode */ }
   if (!user) {
     user = "u-" + Math.random().toString(36).slice(2, 10);
-    localStorage.setItem(USER_KEY, user);
+    try { localStorage.setItem(USER_KEY, user); } catch (e) { /* tab-only history */ }
   }
   const timers = new Map();
 
@@ -51,7 +55,7 @@
     restore: { label: "Detail (optional — what to fix)",
                ph: "e.g. fix scratches, ayusin ang kulay" },
     custom: { label: "Instruction (required)",
-              ph: "e.g. gawing formal ID-style portrait, plain background" },
+              ph: "TL: Gawing formal ang damit. EN: Make the clothes formal. Bisaya: Himog pormal ang sinina." },
   };
 
   const uq = "?user=" + encodeURIComponent(user);
@@ -116,13 +120,13 @@
 
   function selectPreset(id, save = true) {
     activePreset = id;
-    [...presetsBox.children].forEach((el) =>
-      el.classList.toggle("active", el.dataset.id === id));
+    [...presetsBox.children].forEach((el) => {
+      el.classList.toggle("active", el.dataset.id === id);
+      el.setAttribute("aria-pressed", String(el.dataset.id === id));
+    });
     const copy = PRESET_COPY[id] || PRESET_COPY.custom;
     promptLabel.textContent = copy.label;
     promptEl.placeholder = copy.ph;
-    if (!promptEl.value.trim()) // chip fills an empty box; typed text always wins
-      promptEl.value = (copy.ph || "").replace(/^e\.g\.\s*/, "");
     if (save) { try { localStorage.setItem(PRESET_KEY, id); } catch (e) { /* private mode */ } }
   }
 
@@ -179,25 +183,23 @@
     } catch (e) { /* builtin fallback */ }
     if (!list) {
       list = [
-        {id: "background", label: "🏙 Background", hint: "1 photo"},
-        {id: "clothes", label: "👔 Clothes", hint: "1 photo"},
-        {id: "restore", label: "✨ Restore", hint: "1 photo"},
+        {id: "background", label: "🏙 Background", hint: "up to 5 photos"},
+        {id: "clothes", label: "👔 Clothes", hint: "up to 5 photos"},
+        {id: "restore", label: "✨ Restore", hint: "up to 5 photos"},
         {id: "custom", label: "✏ Custom", hint: "free-form"},
       ];
     }
     presetsBox.innerHTML = "";
     list.forEach((p) => {
-      const el = document.createElement("div");
+      const el = document.createElement("button");
+      el.type = "button";
       el.className = "preset";
       el.dataset.id = p.id;
-      el.setAttribute("role", "radio");
-      el.tabIndex = 0;
       el.innerHTML = "<b></b><small></small>";
       el.querySelector("b").textContent = p.label;
       el.querySelector("small").textContent = p.hint;
       const pick = () => selectPreset(p.id);
       el.onclick = pick;
-      el.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pick(); } };
       presetsBox.appendChild(el);
     });
     const sp = savedPreset(); // reload keeps the picked chip; typed prompt untouched
@@ -210,30 +212,42 @@
   }
 
   function renderThumbs() {
+    thumbUrls.forEach((url) => URL.revokeObjectURL(url));
+    thumbUrls = [];
     thumbs.innerHTML = "";
-    if (!file) return;
+    files.forEach((file, index) => {
     const wrap = document.createElement("div");
     wrap.className = "thumb";
     const img = document.createElement("img");
     img.src = URL.createObjectURL(file);
-    img.alt = "upload";
+    thumbUrls.push(img.src);
+    img.alt = "Photo " + (index + 1);
     const rm = document.createElement("button");
     rm.type = "button";
     rm.textContent = "×";
-    rm.setAttribute("aria-label", "Remove image");
-    rm.onclick = (e) => { e.stopPropagation(); file = null; renderThumbs(); idbDel(); };
+    rm.setAttribute("aria-label", "Remove photo " + (index + 1));
+    rm.onclick = (e) => { e.stopPropagation(); files.splice(index, 1); renderThumbs(); saveDraft(); };
     wrap.append(img, rm);
     thumbs.appendChild(wrap);
+    });
   }
 
-  function addFile(f) {
-    if (!f) return;
-    if (!OK_TYPES.includes(f.type)) { setStatus("Rejected: only jpeg/png/webp.", true); return; }
-    if (f.size > MAX_BYTES) { setStatus("Rejected: over 5MB.", true); return; }
-    file = f;
+  function saveDraft() {
+    draftChanged = true;
+    const photos = files.map((f) => ({blob: f, name: f.name, type: f.type}));
+    draftWrites = draftWrites.then(() => photos.length ? idbPut(photos) : idbDel());
+  }
+
+  function addFiles(incoming) {
+    const added = Array.from(incoming);
+    if (!added.length) return;
+    if (files.length + added.length > MAX_IMAGES) { setStatus("Rejected: maximum 5 photos.", true); return; }
+    if (added.some((f) => !OK_TYPES.includes(f.type))) { setStatus("Rejected: only jpeg/png/webp.", true); return; }
+    if (added.some((f) => !f.size || f.size > MAX_BYTES)) { setStatus("Rejected: empty photo or over 5MB.", true); return; }
+    files.push(...added);
     renderThumbs();
-    idbPut({blob: f, name: f.name, type: f.type});
-    setStatus("Photo ready.");
+    saveDraft();
+    setStatus(files.length + (files.length === 1 ? " photo ready." : " photos ready."));
   }
 
   dropzone.addEventListener("click", (e) => {
@@ -243,14 +257,14 @@
   dropzone.addEventListener("keydown", (e) => {
     if (e.key === "Enter" || e.key === " ") { e.preventDefault(); fileInput.click(); }
   });
-  fileInput.addEventListener("change", () => { addFile(fileInput.files[0]); fileInput.value = ""; });
+  fileInput.addEventListener("change", () => { addFiles(fileInput.files); fileInput.value = ""; });
   ["dragenter", "dragover"].forEach((ev) => dropzone.addEventListener(ev, (e) => {
     e.preventDefault(); dropzone.classList.add("over");
   }));
   ["dragleave", "drop"].forEach((ev) => dropzone.addEventListener(ev, (e) => {
     e.preventDefault(); dropzone.classList.remove("over");
   }));
-  dropzone.addEventListener("drop", (e) => addFile(e.dataTransfer.files[0]));
+  dropzone.addEventListener("drop", (e) => addFiles(e.dataTransfer.files));
 
   document.addEventListener("paste", (e) => {
     const cd = e.clipboardData;
@@ -264,7 +278,7 @@
     if (!found.length && cd.files && cd.files.length) {
       for (const f of cd.files) found.push(f);
     }
-    if (found.length) { e.preventDefault(); addFile(found[0]); }
+    if (found.length) { e.preventDefault(); addFiles(found); }
   });
 
   function fmtTime(ts) {
@@ -287,13 +301,19 @@
   async function pollOne(jobId) {
     try {
       const r = await fetch("/api/result/" + jobId + uq);
-      if (!r.ok) return;
+      if (r.status === 404) {
+        stopPoll(jobId);
+        setStatus("This edit is no longer available.", true);
+        return;
+      }
+      if (!r.ok) { setStatus("Unable to check your edit. Retrying in 10 seconds…", true); return; }
       const j = await r.json();
       if (j.status === "done" || j.status === "failed") {
         stopPoll(jobId);
         await loadHistory();
         stageResult(j);
-        setStatus(j.status === "done" ? "Job " + jobId + " done ✨"
+        setStatus(j.artifacts_expired ? "Photos expired after seven days. Upload a photo to edit again."
+                  : j.status === "done" ? "Job " + jobId + " done ✨"
                                       : "Job " + jobId + " failed — credit refunded.", j.status === "failed");
         refreshCredits();
       }
@@ -303,6 +323,12 @@
   function startPoll(jobId) {
     if (timers.has(jobId)) return;
     timers.set(jobId, setInterval(() => pollOne(jobId), POLL_MS));
+  }
+
+  function resultUrl(path) {
+    if (!/^\/api\/result\/[a-zA-Z0-9_-]+\/(file|input\/0)$/.test(path))
+      throw new Error("Invalid result URL");
+    return path + uq;
   }
 
   function cardFor(j) {
@@ -316,11 +342,19 @@
     head.querySelector("small").textContent = fmtTime(j.created_at);
     card.appendChild(head);
 
+    if (j.artifacts_expired) {
+      const p = document.createElement("p");
+      p.className = "muted";
+      p.textContent = "Photos expired after seven days. Edit history is retained.";
+      card.appendChild(p);
+      return card;
+    }
+
     const inRow = document.createElement("div");
     inRow.className = "job-thumbs";
     (j.inputs || []).forEach((src) => {
       const img = document.createElement("img");
-      img.src = src + uq;
+      img.src = resultUrl(src);
       img.alt = "input";
       img.loading = "lazy";
       inRow.appendChild(img);
@@ -332,8 +366,30 @@
       after.alt = "edited result";
       after.loading = "lazy";
       after.style.cssText = "width:100%;height:auto;border-radius:10px;border:1px solid var(--line);background:#0d0b09";
-      after.src = j.image_url + uq;
-      card.appendChild(after);
+      after.src = resultUrl(j.image_url);
+      const compare = document.createElement("div");
+      compare.className = "compare";
+      const before = document.createElement("img");
+      before.className = "compare-before";
+      before.alt = "Original photo";
+      before.src = resultUrl((j.inputs || [])[0] || "/api/result/" + j.job_id + "/input/0");
+      const range = document.createElement("input");
+      range.type = "range";
+      range.min = "0"; range.max = "100"; range.value = "50";
+      range.setAttribute("aria-label", "Compare original and edited photo");
+      const update = () => {
+        before.style.clipPath = "inset(0 " + (100 - range.value) + "% 0 0)";
+        range.setAttribute("aria-valuetext", range.value + "% original photo");
+      };
+      range.addEventListener("input", update);
+      update();
+      const labels = document.createElement("p");
+      labels.className = "compare-labels muted";
+      labels.textContent = "Original ← slide to compare → Edited";
+      before.onerror = () => { before.remove(); range.hidden = true; labels.textContent = "Original unavailable — edited photo shown."; };
+      compare.append(after, before);
+      inRow.remove();
+      card.append(compare, labels, range);
       const row = document.createElement("div");
       row.className = "row";
       const dl = document.createElement("button");
@@ -345,7 +401,7 @@
         const old = dl.textContent;
         dl.textContent = "⏳ Saving…";
         try {
-          const r = await fetch(j.image_url + uq);
+          const r = await fetch(resultUrl(j.image_url));
           if (!r.ok) throw new Error("download " + r.status);
           const blob = await r.blob();
           const url = URL.createObjectURL(blob);
@@ -396,7 +452,9 @@
         seen.add(j.job_id);
         if (j.status !== "done" && j.status !== "failed") startPoll(j.job_id);
       });
-      stageResult(jobs.find((j) => j.status === "done")); // survives tab close
+      resultBox.innerHTML = "";
+      resultBox.classList.add("hidden");
+      stageResult(jobs.find((j) => j.status === "done" && !j.artifacts_expired)); // survives tab close
       [...timers.keys()].forEach((id) => { if (!seen.has(id)) stopPoll(id); });
     } catch (e) {
       historyEl.innerHTML = "<p class='muted'>History unavailable: " + e.message + "</p>";
@@ -404,16 +462,18 @@
   }
 
   submitBtn.addEventListener("click", async () => {
-    if (!file) { setStatus("Add 1 photo first.", true); return; }
+    if (submitBtn.disabled) return;
+    if (!files.length) { setStatus("Add a photo first.", true); return; }
     const prompt = promptEl.value.trim();
-    if (!prompt) { setStatus("Describe what you want first.", true); return; }
+    if (!prompt && activePreset !== "restore") { setStatus("Describe what you want first.", true); return; }
     const fd = new FormData();
-    fd.append("image", file, file.name);
+    files.forEach((file) => fd.append("image", file, file.name));
     fd.append("prompt", prompt);
     fd.append("preset", activePreset);
     fd.append("user", user);
     fd.append("cf-turnstile-response", tsToken());
-    setStatus("Queued… ⚡");
+    submitBtn.disabled = true;
+    setStatus("Sending photo…");
     try {
       const r = await fetch("/api/edit", { method: "POST", body: fd });
       tsReset(); // single-use token: fresh widget state for any retry
@@ -432,10 +492,10 @@
         return;
       }
       if (r.status === 429) {
-        setStatus("Slot full — " + (data.detail || "try again shortly") + ".", true);
+        setStatus((data.detail || "Server busy") + ". Retry after " + (r.headers.get("Retry-After") || "10") + " seconds.", true);
         return;
       }
-      if (r.status !== 202 && !r.ok) throw new Error(data.detail || ("edit failed: " + r.status));
+      if (r.status !== 202 || !data.job_id) throw new Error(data.detail || ("edit failed: " + r.status));
       setCredits(data.credits_left);
       setStatus("Job " + data.job_id + " editing… ⏳");
       formBody.classList.add("hidden"); // photo + prompt kept as-is for retry
@@ -447,7 +507,11 @@
       refreshCredits();
     } catch (e) {
       tsReset();
-      setStatus("Error: " + e.message, true);
+      setStatus("Error: " + e.message + ". Check Past edits before retrying — the server may have received your photo.", true);
+      loadHistory();
+      refreshCredits();
+    } finally {
+      submitBtn.disabled = false;
     }
   });
 
@@ -461,10 +525,13 @@
     try { localStorage.setItem(PROMPT_KEY, promptEl.value); } catch (e) { /* no-op */ }
   });
   idbGet().then((saved) => {
-    if (saved && saved.blob && !file) {
-      const blob = saved.blob;
-      addFile(blob instanceof File ? blob
-        : new File([blob], saved.name || "photo", {type: saved.type || blob.type}));
+    if (saved && !draftChanged) {
+      const photos = Array.isArray(saved) ? saved : [saved];
+      addFiles(photos.filter((photo) => photo && photo.blob).map((photo) => {
+        const blob = photo.blob;
+        return blob instanceof File ? blob
+          : new File([blob], photo.name || "photo", {type: photo.type || blob.type});
+      }));
     }
   }).catch(() => { /* fresh form */ });
 

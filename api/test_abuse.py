@@ -206,6 +206,21 @@ def test_global_daily_cap_503(client, monkeypatch):
     assert FakeEngine.calls == 0
 
 
+def test_global_daily_cap_is_rechecked_atomically(client, monkeypatch):
+    monkeypatch.setattr(server, "MAX_DAILY_EDITS", 1)
+    store = server.get_store()
+    _seed(store, 1)
+    balance_before = store.balance("racer")
+    # Simulate another process crossing the cap after the route's fast check.
+    monkeypatch.setattr(store, "count_jobs_since", lambda since_ts: 0)
+
+    response = _edit(client, "racer", ip="8.8.8.8")
+
+    assert response.status_code == 503, response.text
+    assert FakeEngine.calls == 0
+    assert store.balance("racer") == balance_before
+
+
 def test_store_windows_exclude_old_jobs(tmp_path):
     store = CreditsStore(str(tmp_path / "w.db"))
     store.check_and_debit("fresh", "job-new", ip="1.2.3.4",
