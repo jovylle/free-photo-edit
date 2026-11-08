@@ -1,5 +1,20 @@
 # free-photo-edit — session memories
 
+## Dev split: Pages frontend + Elitedesk API (2026-11-08)
+- Dev now matches the plan: static UI on Cloudflare Pages
+  `https://free-photo-edit-dev.pages.dev`, API on
+  `https://free-photo-edit-dev.uft1.com` (same container, /api only in practice).
+- Frontend contract: `meta[name=api-base]` in each HTML page; empty means
+  same-origin (container). app.js prefixes fetches AND result image URLs with
+  it. Rebuild/deploy via `scripts/deploy-dev-frontend.sh [api-base]`.
+- Backend CORS: `CORS_ORIGINS` (comma-separated) enables ACAO plus an OPTIONS
+  preflight for non-matching origins. Dev value lives in the box env file
+  `~/.homeploy/projects/free-photo-edit-dev/.env`, not in the image.
+- Fixed en route: `resultUrl` only allowed `input/0`, so multi-photo history
+  images threw "Invalid result URL"; now `input/\d+`.
+- Verified on Pages: credits/presets load cross-origin, edit -> done, both
+  comparison images render (naturalWidth 480), no console errors.
+
 ## Dev E2E verification (2026-11-08)
 - Automated: 87 API tests pass (temp DB/storage, fake provider). Contract
   checks on the live dev URL: bad MIME 400, empty prompt 400, >5 photos 400,
