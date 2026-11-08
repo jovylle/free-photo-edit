@@ -20,7 +20,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install fastapi httpx python-dotenv python-multipart pytest
+      - run: pip install -r requirements.txt pytest
       - run: python -m pytest api -q
       - run: node tests/expired-card.cjs
       - run: node --check web/app.js

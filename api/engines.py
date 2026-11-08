@@ -53,6 +53,8 @@ OPENAI_SIZE = "1024x1024"
 OPENAI_QUALITY = "medium"
 
 PNG_SIG = b"\x89PNG\r\n\x1a\n"
+_TINY_PNG = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==")
 JPEG_SIG = b"\xff\xd8\xff"
 
 
@@ -232,11 +234,26 @@ class PollinationsEngine(BaseEngine):
         raise EngineError("501 not-configured: PollinationsEngine stub (v1)")
 
 
+class FakeEngine(BaseEngine):
+    """Dev-only: echoes a PNG so deployed E2E runs cost nothing.
+
+    Non-PNG inputs return a 1x1 PNG because output is served as image/png.
+    """
+
+    name = "fake"
+
+    def edit(self, input_bytes: bytes | list[bytes], prompt: str) -> bytes:
+        data = input_bytes[0] if isinstance(input_bytes, list) else input_bytes
+        return data if data.startswith(b"\x89PNG") else _TINY_PNG
+
+
 def select_engine() -> BaseEngine:
-    """Env switch: FREE_PHOTO_EDIT_ENGINE = openai (default) | workers-ai | pollinations."""
+    """Env switch: FREE_PHOTO_EDIT_ENGINE = openai (default) | workers-ai | pollinations | fake."""
     key = (os.environ.get("FREE_PHOTO_EDIT_ENGINE") or "openai").strip().lower()
     if key == "openai":
         return OpenAiEngine()
+    if key == "fake":
+        return FakeEngine()
     if key == "workers-ai":
         return WorkersAiEngine()
     if key == "pollinations":
