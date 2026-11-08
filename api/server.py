@@ -470,5 +470,17 @@ def _run_job_thread(job_id: str, user: str, input_bytes: bytes | list[bytes],
 
 # Static UI must mount AFTER all /api/* routes (Starlette matches in order).
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
+
+
+@app.middleware("http")
+async def _revalidate_html(request, call_next):
+    """Browsers heuristic-cache HTML, which hides UI changes after a deploy."""
+    response = await call_next(request)
+    path = request.url.path
+    if not path.startswith("/api/") and path.endswith(("/", ".html")):
+        response.headers["Cache-Control"] = "no-cache"
+    return response
+
+
 if WEB_DIR.is_dir():
     app.mount("/", StaticFiles(directory=WEB_DIR, html=True), name="web")

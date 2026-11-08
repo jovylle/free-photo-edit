@@ -212,3 +212,9 @@ def test_jobs_history(client):
     jobs = h.json()["jobs"]
     assert len(jobs) >= 1
     assert jobs[0]["status"] == "done"
+
+
+def test_html_revalidates_but_api_does_not(client):
+    assert client.get("/").headers.get("cache-control") == "no-cache"
+    assert client.get("/index.html").headers.get("cache-control") == "no-cache"
+    assert "cache-control" not in client.get("/api/config").headers
