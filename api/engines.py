@@ -76,7 +76,7 @@ class EngineError(RuntimeError):
 class BaseEngine:
     name = "base"
 
-    def edit(self, input_bytes: bytes, prompt: str) -> bytes:
+    def edit(self, input_bytes: bytes | list[bytes], prompt: str) -> bytes:
         raise NotImplementedError
 
 
@@ -92,7 +92,7 @@ class OpenAiEngine(BaseEngine):
             raise EngineError("OPENAI_API_KEY is not set")
         self._client = _client  # injectable for tests
 
-    def edit(self, input_bytes: bytes, prompt: str) -> bytes:
+    def edit(self, input_bytes: bytes | list[bytes], prompt: str) -> bytes:
         if not input_bytes:
             raise EngineError("no input image provided")
         full_prompt = (
@@ -102,8 +102,13 @@ class OpenAiEngine(BaseEngine):
         headers = {"Authorization": f"Bearer {self.api_key}"}
         data = {"model": OPENAI_MODEL, "prompt": full_prompt,
                 "size": OPENAI_SIZE, "quality": OPENAI_QUALITY}
-        files = {"image": ("input" + _sniff_ext(input_bytes), input_bytes,
-                           _sniff_mime(input_bytes))}
+        if isinstance(input_bytes, list):
+            files = [("image[]", (f"input{i}" + _sniff_ext(raw), raw,
+                                  _sniff_mime(raw)))
+                     for i, raw in enumerate(input_bytes)]
+        else:
+            files = {"image": ("input" + _sniff_ext(input_bytes), input_bytes,
+                               _sniff_mime(input_bytes))}
         try:
             if self._client is None:
                 with httpx.Client(timeout=self.TIMEOUT_S) as c:
@@ -160,6 +165,8 @@ class WorkersAiEngine(BaseEngine):
         )
 
     def edit(self, input_bytes: bytes, prompt: str) -> bytes:
+        if isinstance(input_bytes, list):
+            raise EngineError("workers-ai does not support multiple input images")
         if not input_bytes:
             raise EngineError("no input image provided")
         full_prompt = (
