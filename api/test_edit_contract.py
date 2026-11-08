@@ -218,3 +218,16 @@ def test_html_revalidates_but_api_does_not(client):
     assert client.get("/").headers.get("cache-control") == "no-cache"
     assert client.get("/index.html").headers.get("cache-control") == "no-cache"
     assert "cache-control" not in client.get("/api/config").headers
+
+
+def test_cors_allows_only_configured_origin(client, monkeypatch):
+    monkeypatch.setenv("CORS_ORIGINS", "https://free-photo-edit-dev.pages.dev")
+    ok = client.get("/api/config", headers={"Origin": "https://free-photo-edit-dev.pages.dev"})
+    assert ok.headers.get("access-control-allow-origin") == "https://free-photo-edit-dev.pages.dev"
+    bad = client.get("/api/config", headers={"Origin": "https://evil.example"})
+    assert "access-control-allow-origin" not in bad.headers
+    pre = client.options("/api/edit", headers={
+        "Origin": "https://free-photo-edit-dev.pages.dev",
+        "Access-Control-Request-Method": "POST"})
+    assert pre.status_code == 204
+    assert pre.headers.get("access-control-allow-origin") == "https://free-photo-edit-dev.pages.dev"

@@ -17,6 +17,10 @@
   "use strict";
   const MAX_BYTES = 5 * 1024 * 1024, MAX_IMAGES = 5;
   const OK_TYPES = ["image/jpeg", "image/png", "image/webp"];
+  // Same-origin by default; a deployed static frontend sets meta[name=api-base].
+  const API_BASE = (document.querySelector('meta[name="api-base"]')?.content || "").replace(/\/+$/, "");
+  const api = (path) => API_BASE + path;
+
   const USER_KEY = "freephotoedit_user";
   const PROMPT_KEY = "freephotoedit_prompt";
   const PRESET_KEY = "freephotoedit_preset";
@@ -72,7 +76,7 @@
   async function initTurnstile() {
     let sitekey = null;
     try {
-      const r = await fetch("/api/config");
+      const r = await fetch(api("/api/config"));
       if (r.ok) sitekey = (await r.json()).turnstile_sitekey || null;
     } catch (e) { /* dev: widget stays off */ }
     if (!sitekey) return;
@@ -109,7 +113,7 @@
 
   async function refreshCredits() {
     try {
-      const r = await fetch("/api/credits?user=" + encodeURIComponent(user));
+      const r = await fetch(api("/api/credits?user=" + encodeURIComponent(user)));
       if (!r.ok) throw new Error("credits " + r.status);
       setCredits((await r.json()).credits_left);
     } catch (e) {
@@ -178,7 +182,7 @@
   async function loadPresets() {
     let list = null;
     try {
-      const r = await fetch("/api/presets");
+      const r = await fetch(api("/api/presets"));
       if (r.ok) list = (await r.json()).presets;
     } catch (e) { /* builtin fallback */ }
     if (!list) {
@@ -300,7 +304,7 @@
 
   async function pollOne(jobId) {
     try {
-      const r = await fetch("/api/result/" + jobId + uq);
+      const r = await fetch(api("/api/result/" + jobId) + uq);
       if (r.status === 404) {
         stopPoll(jobId);
         setStatus("This edit is no longer available.", true);
@@ -326,9 +330,9 @@
   }
 
   function resultUrl(path) {
-    if (!/^\/api\/result\/[a-zA-Z0-9_-]+\/(file|input\/0)$/.test(path))
+    if (!/^\/api\/result\/[a-zA-Z0-9_-]+\/(file|input\/\d+)$/.test(path))
       throw new Error("Invalid result URL");
-    return path + uq;
+    return api(path) + uq;
   }
 
   function cardFor(j) {
@@ -437,7 +441,7 @@
 
   async function loadHistory() {
     try {
-      const r = await fetch("/api/jobs?user=" + encodeURIComponent(user));
+      const r = await fetch(api("/api/jobs?user=" + encodeURIComponent(user)));
       if (!r.ok) throw new Error("jobs " + r.status);
       const jobs = (await r.json()).jobs || [];
       historyEl.innerHTML = "";
@@ -475,7 +479,7 @@
     submitBtn.disabled = true;
     setStatus("Sending photo…");
     try {
-      const r = await fetch("/api/edit", { method: "POST", body: fd });
+      const r = await fetch(api("/api/edit"), { method: "POST", body: fd });
       tsReset(); // single-use token: fresh widget state for any retry
       const data = await r.json().catch(() => ({}));
       if (r.status === 402) {

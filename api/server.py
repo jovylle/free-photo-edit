@@ -34,7 +34,7 @@ import uuid
 from pathlib import Path
 
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, Response, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.datastructures import UploadFile as StarletteUploadFile
@@ -470,6 +470,30 @@ def _run_job_thread(job_id: str, user: str, input_bytes: bytes | list[bytes],
 
 # Static UI must mount AFTER all /api/* routes (Starlette matches in order).
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
+
+
+def _cors_origins() -> set[str]:
+    """Extra origins allowed to call /api/* (static frontend on another host)."""
+    return {o.strip() for o in os.environ.get("CORS_ORIGINS", "").split(",") if o.strip()}
+
+
+@app.middleware("http")
+async def _cors(request, call_next):
+    origin = request.headers.get("origin", "")
+    allowed = origin if origin and origin in _cors_origins() else ""
+    if allowed and request.method == "OPTIONS":
+        return Response(status_code=204, headers={
+            "Access-Control-Allow-Origin": allowed,
+            "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+            "Access-Control-Allow-Headers": "*",
+            "Access-Control-Max-Age": "600",
+            "Vary": "Origin",
+        })
+    response = await call_next(request)
+    if allowed:
+        response.headers["Access-Control-Allow-Origin"] = allowed
+        response.headers["Vary"] = "Origin"
+    return response
 
 
 @app.middleware("http")
