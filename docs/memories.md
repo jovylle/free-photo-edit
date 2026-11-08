@@ -1,5 +1,18 @@
 # free-photo-edit — session memories
 
+## Dev stack live on elitedesk (2026-11-08)
+- `dev` merged PR #1, then deployed via homeploy: container
+  `homeploy-free-photo-edit-dev-...` on host port 8090, tunnel hostname
+  `https://free-photo-edit-dev.uft1.com`. Data at
+  `~/.homeploy/projects/free-photo-edit-dev/data` (volume, survives redeploy).
+- Dev runs `FREE_PHOTO_EDIT_ENGINE=fake` (echoes a PNG). Deliberately no
+  OpenAI key and no Turnstile secret anywhere in the image, so a public
+  hostname cannot spend money. Production must override the engine env.
+- E2E verified on dev: POST /api/edit -> 202 -> done -> 70B PNG download.
+- CI still cannot run (Actions failed in 0s, zero jobs; private-repo billing
+  suspicion). Local gate = 86 API tests + expired-card; use before merges.
+- Production `freephoto.uft1.com` untouched, still the Mac launchd service.
+
 ## Combined branch (2026-11-08)
 - Three-way merge done in worktree `.t3/worktrees/free-photo-edit/t3-e85acc37`
   (branch `manage-deployment-plan`): lab TTL/cleanup + server hardening vs live
