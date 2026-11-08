@@ -6,3 +6,9 @@ api/credits.db
 *.pyc
 .DS_Store
 .superpowers/
+
+# test artifacts
+.playwright-mcp/
+dev-*.png
+e2e-*.png
+user-photo*.png
