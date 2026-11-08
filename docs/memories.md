@@ -1,5 +1,24 @@
 # free-photo-edit — session memories
 
+## Backup rehearsal + dev UI polish (2026-11-08)
+- Live backup taken read-only via `sqlite3 .backup` to
+  `~/fore/services/free-photo-edit/backups/2026-11-08-pre-migration`
+  (credits.db + storage). integrity_check ok: 18 users, 15 done, 1 failed, 39
+  credits, 32 files. Live service untouched.
+- Restore rehearsal passed: merged code ran on a COPY of that backup; history
+  and results loaded, output PNG bytes matched the stored file, and all terminal
+  rows got `terminal_at`. Note opening the live DB with new code WRITES the
+  schema migration, so first prod start must be intentional.
+- RELEASE GOTCHA: `homeploy push` fails with "port 8090 is already in use" on
+  redeploy. Run `homeploy down free-photo-edit-dev` on the box first.
+- Dev UI fixes: header said "3 free/day" but credits are 3 total (not daily);
+  dropzone got an icon/title/hint empty state; the "Ad slot (placeholder)" box
+  is hidden until real inventory.
+- Added no-cache on HTML (`_revalidate_html` middleware): browsers
+  heuristic-cached index.html, hiding deploys. Data volume proven to survive
+  redeploy (prior dev jobs still listed).
+- 87 API tests pass; expired-card DOM test passes.
+
 ## Dev stack live on elitedesk (2026-11-08)
 - `dev` merged PR #1, then deployed via homeploy: container
   `homeploy-free-photo-edit-dev-...` on host port 8090, tunnel hostname

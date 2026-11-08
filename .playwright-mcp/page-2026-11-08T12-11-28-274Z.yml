@@ -1,0 +1,42 @@
+- generic [active] [ref=f4e1]:
+  - banner [ref=f4e2]:
+    - heading "✨ Free Photo Edit up to 5 photos · 3 free/day" [level=1] [ref=f4e3]
+    - navigation [ref=f4e4]:
+      - generic "Edits remaining" [ref=f4e5]: "credits left: …"
+      - button "🌙 Dark" [ref=f4e6] [cursor=pointer]
+  - main [ref=f4e7]:
+    - generic [ref=f4e9]:
+      - button "Drop up to 5 photos here or click to browse" [ref=f4e10] [cursor=pointer]: Drop up to 5 photos here, or click to browse
+      - paragraph [ref=f4e11]: Up to 5 photos (jpeg/png/webp, max 5MB each). You can also paste (Ctrl+V) a screenshot.
+      - generic [ref=f4e12]:
+        - generic [ref=f4e13]: Instruction
+        - textbox "Instruction" [ref=f4e14]:
+          - /placeholder: "TL: Gawing formal ang damit. EN: Make the clothes formal. Bisaya: Himog pormal ang sinina."
+        - group "Edit type"
+      - button "Edit ✨" [ref=f4e16] [cursor=pointer]
+    - group [ref=f4e18]:
+      - generic "Past edits" [ref=f4e19] [cursor=pointer]
+    - generic [ref=f4e20]:
+      - heading "Support free edits" [level=3] [ref=f4e21]
+      - generic [ref=f4e22]:
+        - group [ref=f4e23]:
+          - generic "💚 Donate via GCash — tap to show QR" [ref=f4e24] [cursor=pointer]
+        - link "☕ Ko-fi" [ref=f4e25] [cursor=pointer]:
+          - /url: https://ko-fi.com/twe222
+      - paragraph [ref=f4e26]: Scan the QR with GCash, or tap Ko-fi — donations keep the free edits running. 🙏
+      - generic [ref=f4e27]: Ad slot — 1 placement (placeholder)
+  - contentinfo [ref=f4e28]:
+    - link "Home" [ref=f4e29] [cursor=pointer]:
+      - /url: index.html
+    - text: ·
+    - link "About" [ref=f4e30] [cursor=pointer]:
+      - /url: about.html
+    - text: ·
+    - link "Privacy" [ref=f4e31] [cursor=pointer]:
+      - /url: privacy.html
+    - text: ·
+    - link "Terms" [ref=f4e32] [cursor=pointer]:
+      - /url: terms.html
+    - text: ·
+    - link "Ko-fi" [ref=f4e33] [cursor=pointer]:
+      - /url: https://ko-fi.com/twe222
