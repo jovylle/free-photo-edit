@@ -346,6 +346,9 @@ def presets():
 
 @app.get("/api/packs")
 def packs():
+    # Unconfigured (no keys/URLs): hide the packs instead of offering a 503.
+    if not (PAYMONGO_SECRET_KEY and PAYMENT_SUCCESS_URL and PAYMENT_CANCEL_URL):
+        return {"packs": []}
     return {"packs": [{"id": pid, **pack} for pid, pack in PACKS.items()]}
 
 

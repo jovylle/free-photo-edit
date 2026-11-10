@@ -129,6 +129,11 @@ def _buy(store, user="buyer", session="cs_paid_1", credits=10):
 # --- checkout ---
 
 
+def test_packs_hidden_when_unconfigured(client, monkeypatch):
+    monkeypatch.setattr(server, "PAYMONGO_SECRET_KEY", "")
+    assert client.get("/api/packs").json() == {"packs": []}
+
+
 def test_packs_are_server_side(client):
     packs = {p["id"]: p for p in client.get("/api/packs").json()["packs"]}
     assert packs["starter"] == {"id": "starter", "label": "Starter",
