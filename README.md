@@ -45,6 +45,9 @@ check and hostname/action validation.
 | `GET` | `/api/credits?user=` | `{user, credits_left}`. Read routes accept `X-User` or `?user=`; POST uses the multipart `user`. |
 | `GET` | `/api/presets` | `background`, `clothes`, `restore`, `custom`. |
 | `GET` | `/api/config` | `{turnstile_sitekey}` (null when unset); never exposes the secret. |
+| `GET` | `/api/packs` | Server-side edit packs: `{packs: [{id, label, price, credits}]}`, price in centavos. |
+| `POST` | `/api/checkout` | JSON `{pack, user, email}` → `{checkout_url, session_id}` (Xendit hosted checkout). 400 unknown pack or bad email, 429 over 5/hour/IP, 503 when Xendit keys are unset. |
+| `POST` | `/api/xendit/webhook` | `x-callback-token` header; grants pack edits once per paid session. 401 bad token, 400 low amount, 200 for duplicates and unknown sessions. |
 
 Validation: 1–5 nonempty JPEG/PNG/WebP uploads, each up to 5 MiB, prompt up to 2000
 characters, known preset. Restore can supply its default instruction; custom

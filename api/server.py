@@ -25,16 +25,20 @@ from __future__ import annotations
 import os
 import asyncio
 from contextlib import asynccontextmanager
+import hmac
+import json
 import logging
 import hashlib
+import re
 import threading
 import time
 import traceback
 import uuid
 from pathlib import Path
+from typing import TypedDict
 
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, Response, UploadFile
+from fastapi import Body, Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, Response, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.datastructures import UploadFile as StarletteUploadFile
@@ -111,6 +115,98 @@ TURNSTILE_ACTION = "edit"
 TURNSTILE_VERIFY_URL = "https://challenges.cloudflare.com/turnstile/v0/siteverify"
 
 _warned_no_turnstile = False
+
+# --- Paid edit packs (server-side prices; the browser never sends one) ---
+# Amounts are centavos (PHP): ₱49.00 = 4900.
+class Pack(TypedDict):
+    label: str
+    price: int
+    credits: int
+
+
+PACKS: dict[str, Pack] = {
+    "starter": {"label": "Starter", "price": 4900, "credits": 10},
+    "plus": {"label": "Plus", "price": 9900, "credits": 25},
+    "pro": {"label": "Pro", "price": 19900, "credits": 60},
+}
+XENDIT_API = "https://api.xendit.co/sessions"
+XENDIT_SECRET_KEY = os.environ.get("XENDIT_SECRET_KEY", "")
+XENDIT_WEBHOOK_TOKEN = os.environ.get("XENDIT_WEBHOOK_TOKEN", "")
+PAYMENT_SUCCESS_URL = os.environ.get("PAYMENT_SUCCESS_URL", "")
+PAYMENT_CANCEL_URL = os.environ.get("PAYMENT_CANCEL_URL", "")
+CHECKOUT_PER_HOUR = int(os.environ.get("CHECKOUT_PER_HOUR", "5"))
+EMAIL_RE = re.compile(r"^[^@\s]{1,100}@[^@\s]{1,100}\.[^@\s]{1,100}$")
+
+_checkout_hits: dict[str, list[float]] = {}
+_checkout_guard = threading.Lock()
+
+
+def _checkout_allowed(ip: str, now: float) -> bool:
+    with _checkout_guard:
+        hits = [t for t in _checkout_hits.get(ip, []) if t > now - 3600]
+        _checkout_hits[ip] = hits
+        if len(hits) >= CHECKOUT_PER_HOUR:
+            return False
+        hits.append(now)
+        return True
+
+
+class XenditError(RuntimeError):
+    pass
+
+
+def _xendit_amount(centavos: int) -> int:
+    """Xendit takes whole pesos. The ledger stores what we send, so the
+    webhook compares like-for-like. Confirm the unit on the first sandbox
+    session: the hosted page must read ₱49.00, never ₱4,900 or ₱0.49.
+    """
+    return centavos // 100
+
+
+def _checkout_payload(pack_id: str, user: str, reference: str,
+                      email: str) -> dict[str, object]:
+    pack = PACKS[pack_id]
+    amount = _xendit_amount(pack["price"])
+    return {
+        "reference_id": reference,
+        "session_type": "PAY",
+        "mode": "PAYMENT_LINK",
+        "amount": amount,
+        "currency": "PHP",
+        "country": "PH",
+        "description": f"Free Photo Edit — {pack['label']}: {pack['credits']} edits",
+        "items": [{"reference_id": pack_id, "type": "DIGITAL_SERVICE",
+                   "name": f"{pack['label']} — {pack['credits']} edits",
+                   "net_unit_amount": amount, "quantity": 1,
+                   "category": "Photo editing"}],
+        "success_return_url": PAYMENT_SUCCESS_URL,
+        "cancel_return_url": PAYMENT_CANCEL_URL,
+        "metadata": {"user": user, "pack": pack_id, "email": email},
+    }
+
+
+def _create_checkout_session(pack_id: str, user: str,
+                             email: str) -> tuple[str, str]:
+    """Create a Xendit payment session -> (session_id, checkout_url)."""
+    r = httpx.post(XENDIT_API, auth=(XENDIT_SECRET_KEY, ""),
+                   json=_checkout_payload(pack_id, user, uuid.uuid4().hex,
+                                          email),
+                   timeout=20)
+    if r.status_code not in (200, 201):
+        raise XenditError(f"Xendit HTTP {r.status_code}")
+    try:
+        data = r.json()
+        return data["payment_session_id"], data["payment_link_url"]
+    except (KeyError, TypeError):
+        raise XenditError("Xendit bad response") from None
+
+
+def _verify_webhook_token(token: str) -> None:
+    """Xendit sends a static token in the x-callback-token header."""
+    if not XENDIT_WEBHOOK_TOKEN:
+        raise HTTPException(503, "payments not configured")
+    if not token or not hmac.compare_digest(token, XENDIT_WEBHOOK_TOKEN):
+        raise HTTPException(401, "bad token")
 
 
 class TurnstileError(RuntimeError):
@@ -243,6 +339,74 @@ def presets():
     ]}
 
 
+@app.get("/api/packs")
+def packs() -> dict[str, object]:
+    # Unconfigured (no keys/URLs): hide the packs instead of offering a 503.
+    if not (XENDIT_SECRET_KEY and PAYMENT_SUCCESS_URL and PAYMENT_CANCEL_URL):
+        return {"packs": []}
+    return {"packs": [{"id": pid, **pack} for pid, pack in PACKS.items()]}
+
+
+@app.post("/api/checkout")
+def checkout(request: Request,
+             payload: dict[str, object] = Body(...)) -> dict[str, object]:
+    pack_id = str(payload.get("pack") or "").strip()
+    user = str(payload.get("user") or "").strip()
+    email = str(payload.get("email") or "").strip()
+    if pack_id not in PACKS:
+        raise HTTPException(400, "unknown pack")
+    if not user or len(user) > 100:
+        raise HTTPException(400, "user required")
+    if not EMAIL_RE.match(email):
+        raise HTTPException(400, "valid email required")
+    if not (XENDIT_SECRET_KEY and PAYMENT_SUCCESS_URL and PAYMENT_CANCEL_URL):
+        raise HTTPException(503, "payments not configured")
+    if not _checkout_allowed(_client_ip(request), time.time()):
+        raise HTTPException(429, "too many checkout attempts — try again later",
+                            headers={"Retry-After": "3600"})
+    try:
+        session_id, checkout_url = _create_checkout_session(
+            pack_id, user, email)
+    except XenditError as e:
+        logging.getLogger(__name__).warning("checkout failed: %s", e)
+        raise HTTPException(502, "could not start checkout — try again") from e
+    pack = PACKS[pack_id]
+    # Store the amount we actually sent: the webhook compares against it.
+    get_store().create_payment(session_id, user, pack_id,
+                               pack["credits"],
+                               _xendit_amount(pack["price"]), email)
+    return {"checkout_url": checkout_url, "session_id": session_id}
+
+
+@app.post("/api/xendit/webhook")
+async def xendit_webhook(request: Request) -> dict[str, object]:
+    _verify_webhook_token(request.headers.get("x-callback-token", ""))
+    try:
+        body = json.loads(await request.body())
+        event = body["event"]
+        data = body["data"]
+    except (ValueError, KeyError, TypeError):
+        raise HTTPException(400, "bad payload") from None
+    if event != "payment_session.completed":
+        return {"ok": True, "credited": 0}
+    session_id = data.get("payment_session_id")
+    record = get_store().payment(session_id) if session_id else None
+    if record is None:
+        # 200, not 400: Xendit retries non-2xx six times and a retry cannot
+        # create a row we never recorded. Log it so a real bug is visible.
+        logging.getLogger(__name__).warning(
+            "webhook for unknown session: %s", session_id)
+        return {"ok": True, "credited": 0}
+    if record["status"] == "paid":
+        return {"ok": True, "credited": 0}  # duplicate delivery: no-op
+    paid_amount = int(data.get("amount") or 0)
+    amount_due = record["amount"]
+    if not isinstance(amount_due, int) or paid_amount < amount_due:
+        raise HTTPException(400, "amount mismatch")
+    return {"ok": True, "credited":
+            get_store().mark_paid(session_id, paid_amount)}
+
+
 @app.get("/api/result/{job_id}")
 def result(job_id: str, user: str = Depends(current_user)):
     store = get_store()
@@ -341,7 +505,11 @@ async def edit(
         _warned_no_turnstile = True
         print("WARN: TURNSTILE_SECRET unset — bot check OFF (dev only)")
     now = time.time()
-    if store.count_jobs_since(now - 86400) >= MAX_DAILY_EDITS:
+    # Free-budget gates (global cap + per-device daily) apply only to users
+    # who have never paid. A paid balance is finite; the per-minute IP limit,
+    # Turnstile and upload validation still apply to everyone.
+    paying = store.paid_total(user) > 0 and store.balance(user) > 0
+    if not paying and store.count_jobs_since(now - 86400) >= MAX_DAILY_EDITS:
         raise HTTPException(
             503, "today's free budget is used up — try again tomorrow",
             headers={"Retry-After": "3600"})
@@ -349,11 +517,11 @@ async def edit(
         raise HTTPException(
             429, "too many tries — wait a minute and try again",
             headers={"Retry-After": "60"})
-    if store.ip_job_count_since(ip, now - 86400) >= IP_DAILY_LIMIT:
+    if not paying and store.ip_job_count_since(ip, now - 86400) >= IP_DAILY_LIMIT:
         raise HTTPException(
             429, f"this network has used its {IP_DAILY_LIMIT} free runs today",
             headers={"Retry-After": "3600"})
-    if device and store.ip_job_count_since(
+    if not paying and device and store.ip_job_count_since(
             ip, now - 86400, ua=device) >= DEVICE_DAILY_LIMIT:
         raise HTTPException(
             429, f"this device has used its {DEVICE_DAILY_LIMIT} free runs today",
@@ -405,7 +573,8 @@ async def edit(
         try:
             credits_left = store.check_and_debit(
                 user, job_id, preset=preset, ip=ip, ua=device, prompt=prompt,
-                daily_limit=MAX_DAILY_EDITS, since_ts=now - 86400)
+                daily_limit=None if paying else MAX_DAILY_EDITS,
+                since_ts=now - 86400)
         except OutOfCredits:
             ip_sem.release()
             _global_slots.release()

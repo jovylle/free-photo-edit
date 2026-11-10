@@ -59,6 +59,12 @@
   .dl.solid { background:var(--accent); color:var(--onaccent); border:0; font-weight:700 }
   .dl:disabled { opacity:.5; cursor:wait }
   #donate { display:flex; gap:10px; flex-wrap:wrap; align-items:center }
+  #packs { display:flex; gap:10px; flex-wrap:wrap }
+  .pack { flex:1 1 150px; display:grid; gap:2px; text-align:left; font:inherit; color:var(--ink); background:var(--input); border:1px solid var(--line); border-radius:10px; padding:10px 14px; cursor:pointer; min-height:44px }
+  .pack b { font-size:15px }
+  .pack small { color:var(--muted); font-size:12px }
+  .pack:disabled { opacity:.5; cursor:wait }
+  #buyStatus.error { color:var(--err) }
   .compare { position:relative; overflow:hidden; border-radius:10px; background:var(--input) }
   .compare img { display:block; width:100% }
   .compare .compare-before { position:absolute; inset:0; height:100%; object-fit:contain; background:var(--input) }
@@ -106,6 +112,17 @@
     <div id="history" style="margin-top:12px"><p class="muted">Loading…</p></div>
   </details>
 
+  <section class="card" id="buyCard">
+    <h3>Buy edits</h3>
+    <div id="packs" role="group" aria-label="Edit packs"><p class="muted">Loading packs…</p></div>
+    <div class="field" style="max-width:340px;margin:12px 0 0">
+      <label for="buyEmail">Email — so we can recover your edits if this browser loses its data</label>
+      <input id="buyEmail" type="email" autocomplete="email" maxlength="200" placeholder="you@example.com" style="background:var(--input);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:10px;font:inherit">
+    </div>
+    <p class="muted" id="buyStatus" aria-live="polite" style="margin:10px 0 0"></p>
+    <p class="muted" style="margin:10px 0 0">Paid via GCash, Maya, GrabPay or card — handled by Xendit. Your edits are added after payment confirms.</p>
+  </section>
+
   <section class="card" id="donateCard">
     <h3>Support free edits</h3>
     <div id="donate">
@@ -123,6 +140,6 @@
   <a href="index.html">Home</a> · <a href="about.html">About</a> · <a href="privacy.html">Privacy</a> · <a href="terms.html">Terms</a> · <a href="https://ko-fi.com/twe222" target="_blank" rel="noopener">Ko-fi</a>
 </footer>
 <script src="site.js" defer></script>
-<script src="app.js?v=20261108b"></script>
+<script src="app.js?v=20261110a"></script>
 </body>
 </html>
