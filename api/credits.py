@@ -297,7 +297,7 @@ class CreditsStore:
             )
             self._db.commit()
 
-    def payment(self, session_id: str) -> dict | None:
+    def payment(self, session_id: str) -> dict[str, object] | None:
         with self._lock:
             row = self._db.execute(
                 "SELECT session_id, user, pack, credits, amount, status,"

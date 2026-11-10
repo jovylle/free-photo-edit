@@ -7,12 +7,10 @@ from __future__ import annotations
 
 import hashlib
 import json
-import time
 import uuid
 
 import pytest
 from fastapi.testclient import TestClient
-
 from free_photo_edit_api import server
 from free_photo_edit_api.credits import CreditsStore
 

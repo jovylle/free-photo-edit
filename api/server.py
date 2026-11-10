@@ -35,6 +35,7 @@ import time
 import traceback
 import uuid
 from pathlib import Path
+from typing import TypedDict
 
 from dotenv import load_dotenv
 from fastapi import Body, Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, Response, UploadFile
@@ -117,7 +118,13 @@ _warned_no_turnstile = False
 
 # --- Paid edit packs (server-side prices; the browser never sends one) ---
 # Amounts are centavos (PHP): ₱49.00 = 4900.
-PACKS = {
+class Pack(TypedDict):
+    label: str
+    price: int
+    credits: int
+
+
+PACKS: dict[str, Pack] = {
     "starter": {"label": "Starter", "price": 4900, "credits": 10},
     "plus": {"label": "Plus", "price": 9900, "credits": 25},
     "pro": {"label": "Pro", "price": 19900, "credits": 60},
@@ -157,7 +164,7 @@ def _xendit_amount(centavos: int) -> int:
 
 
 def _checkout_payload(pack_id: str, user: str, reference: str,
-                      email: str) -> dict:
+                      email: str) -> dict[str, object]:
     pack = PACKS[pack_id]
     amount = _xendit_amount(pack["price"])
     return {
@@ -333,7 +340,7 @@ def presets():
 
 
 @app.get("/api/packs")
-def packs():
+def packs() -> dict[str, object]:
     # Unconfigured (no keys/URLs): hide the packs instead of offering a 503.
     if not (XENDIT_SECRET_KEY and PAYMENT_SUCCESS_URL and PAYMENT_CANCEL_URL):
         return {"packs": []}
@@ -341,7 +348,8 @@ def packs():
 
 
 @app.post("/api/checkout")
-def checkout(request: Request, payload: dict = Body(...)):
+def checkout(request: Request,
+             payload: dict[str, object] = Body(...)) -> dict[str, object]:
     pack_id = str(payload.get("pack") or "").strip()
     user = str(payload.get("user") or "").strip()
     email = str(payload.get("email") or "").strip()
@@ -371,7 +379,7 @@ def checkout(request: Request, payload: dict = Body(...)):
 
 
 @app.post("/api/xendit/webhook")
-async def xendit_webhook(request: Request):
+async def xendit_webhook(request: Request) -> dict[str, object]:
     _verify_webhook_token(request.headers.get("x-callback-token", ""))
     try:
         body = json.loads(await request.body())
@@ -392,7 +400,8 @@ async def xendit_webhook(request: Request):
     if record["status"] == "paid":
         return {"ok": True, "credited": 0}  # duplicate delivery: no-op
     paid_amount = int(data.get("amount") or 0)
-    if paid_amount < record["amount"]:
+    amount_due = record["amount"]
+    if not isinstance(amount_due, int) or paid_amount < amount_due:
         raise HTTPException(400, "amount mismatch")
     return {"ok": True, "credited":
             get_store().mark_paid(session_id, paid_amount)}
