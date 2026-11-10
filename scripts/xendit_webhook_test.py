@@ -42,6 +42,7 @@ def post(url: str, body: dict, token: str) -> tuple[int, dict]:
     req = urllib.request.Request(
         url, data=raw, method="POST",
         headers={"Content-Type": "application/json",
+                 "User-Agent": "free-photo-edit-webhook-test/1.0",
                  "x-callback-token": token})
     try:
         with urllib.request.urlopen(req, timeout=20) as r:

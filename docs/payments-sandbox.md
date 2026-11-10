@@ -56,6 +56,15 @@ event → URL `https://<tunnel-host>/api/xendit/webhook` → Test and save.
 The probe returns `200` even for an unknown session id, so the save should pass.
 A bad or missing `x-callback-token` returns `401`.
 
+Two things that will waste an hour otherwise:
+
+- Xendit's URL validator rejects `*.trycloudflare.com` quick tunnels ("may
+  contain private or local IPs"). Use a real hostname — the dev API
+  (`https://free-photo-edit-dev.uft1.com/api/xendit/webhook`) is the one that
+  works today.
+- Cloudflare blocks `Python-urllib` at the edge (error 1010), so the helper
+  script sends its own User-Agent. Keep it when editing that script.
+
 ## 5. Buy a pack
 
 1. Open the tunnel URL, click a pack, fill in an email.
