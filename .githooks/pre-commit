@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Fast local gate. Enable once per clone:
+#   git config core.hooksPath .githooks
+# The whole check runs in a few seconds here; add filters only if that stops being true.
+exec "$(dirname "$0")/../scripts/check.sh"

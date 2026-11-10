@@ -1,0 +1,18 @@
+# Reviewers for the files that decide whether the checks can be trusted.
+# Changes here need a maintainer, not just a green build.
+*                       @jovylle
+
+/pyproject.toml         @jovylle
+/CODEOWNERS             @jovylle
+/.ai/                   @jovylle
+/.github/workflows/     @jovylle
+/AGENTS.md              @jovylle
+/CLAUDE.md              @jovylle
+/docs/ARCHITECTURE.md   @jovylle
+/docs/decisions/        @jovylle
+/scripts/check.sh       @jovylle
+/scripts/ratchet.py     @jovylle
+/scripts/structure.py   @jovylle
+/scripts/guard.py       @jovylle
+/scripts/audit.sh       @jovylle
+/api/conftest.py        @jovylle
