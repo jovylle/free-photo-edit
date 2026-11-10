@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Blocks direct pushes to master/dev before they leave the machine. GitHub
+# branch protection enforces this server-side too; this is the fast, local
+# early warning. Merge via PR.
+# Deliberate override, with a reason: git push --no-verify
+status=0
+while read -r _local_ref _local_sha remote_ref _remote_sha; do
+  case "$remote_ref" in
+    refs/heads/master | refs/heads/dev)
+      echo "pre-push: direct push to ${remote_ref#refs/heads/} blocked — open a PR instead." >&2
+      echo "pre-push: override deliberately with: git push --no-verify <remote> <branch>" >&2
+      status=1
+      ;;
+  esac
+done
+exit $status
