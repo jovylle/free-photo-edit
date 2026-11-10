@@ -175,6 +175,7 @@
     } catch (e) { /* offline: keep the note */ }
     if (!packs || !packs.length) {
       packsBox.innerHTML = "<p class='muted'>Edit packs are unavailable right now.</p>";
+      buyCard.style.display = "none"; // unconfigured: no dead offer on the page
       return;
     }
     packsBox.innerHTML = "";
