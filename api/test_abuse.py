@@ -169,33 +169,40 @@ def test_ip_minute_limit_429_zero_spend(client, monkeypatch):
     assert server.get_store().balance("m3") == 3
 
 
-def test_ip_daily_limit_429(client, monkeypatch):
-    monkeypatch.setattr(server, "IP_DAILY_LIMIT", 2)
-    _seed(server.get_store(), 2, ip="6.6.6.6",
-          ua=_dev("6.6.6.6"))
-    r = _edit(client, "d1", ip="6.6.6.6", ua="test-ua")
-    assert r.status_code == 429, r.text
-    assert FakeEngine.calls == 0
-
-
-def test_ip_daily_limit_per_device(client, monkeypatch):
-    # Same IP, different UA -> separate daily buckets (shared WiFi case).
-    # Minute window stays IP-keyed, so lift it to observe daily per-device.
+def test_ip_daily_limit_ignores_user_agent(client, monkeypatch):
+    # Same IP, different UA -> the per-IP ceiling still applies.
     monkeypatch.setattr(server, "IP_MINUTE_LIMIT", 999)
-    for i in range(24):
-        r = _edit(client, f"f{i}", ip="6.6.6.6", ua=f"friend-{i}")
+    monkeypatch.setattr(server, "IP_DAILY_LIMIT", 2)
+    for i in range(2):
+        r = _edit(client, f"d{i}", ip="6.6.6.6", ua=f"device-{i}")
         assert r.status_code == 202, r.text
-    r = _edit(client, "f-a", ip="6.6.6.6", ua="friend-a")
-    assert r.status_code == 202, r.text
-    # The IP minute window (3/min, still IP-keyed) fires before we can hit
-    # one device's 24/day, so exhaustion is shown per-device directly:
-    seeded = server.get_store()
+    r = _edit(client, "d-a", ip="6.6.6.6", ua="device-a")
+    assert r.status_code == 429, r.text
+    assert "network" in r.json()["detail"]
+
+
+def test_device_daily_limit_429(client, monkeypatch):
+    # Shared WiFi: one device's bucket fills before the per-IP ceiling.
+    monkeypatch.setattr(server, "IP_MINUTE_LIMIT", 999)
+    monkeypatch.setattr(server, "IP_DAILY_LIMIT", 999)
+    monkeypatch.setattr(server, "DEVICE_DAILY_LIMIT", 2)
+    _seed(server.get_store(), 2, ip="7.7.7.7",
+          ua=_dev("7.7.7.7", "friend-x"), prefix="fx")
     calls_before = FakeEngine.calls
-    _seed(seeded, 24, ip="7.7.7.7", ua=_dev("7.7.7.7", "friend-x"),
-          prefix="fx")
     r = _edit(client, "fx1", ip="7.7.7.7", ua="friend-x")
     assert r.status_code == 429, r.text
+    assert "device" in r.json()["detail"]
     assert FakeEngine.calls == calls_before
+
+
+def test_shared_wifi_devices_separate_buckets(client, monkeypatch):
+    monkeypatch.setattr(server, "IP_MINUTE_LIMIT", 999)
+    monkeypatch.setattr(server, "IP_DAILY_LIMIT", 999)
+    monkeypatch.setattr(server, "DEVICE_DAILY_LIMIT", 1)
+    assert _edit(client, "w1", ip="6.6.6.6", ua="friend-a").status_code == 202
+    assert _edit(client, "w2", ip="6.6.6.6", ua="friend-b").status_code == 202
+    r = _edit(client, "w3", ip="6.6.6.6", ua="friend-a")
+    assert r.status_code == 429, r.text
 
 
 def test_global_daily_cap_503(client, monkeypatch):
