@@ -155,9 +155,12 @@ against a real ledger/storage enables automatic cleanup after any legacy grace.
 ## Verification
 
 ```bash
-.venv/bin/python -m pytest api -v
-node tests/expired-card.cjs
+scripts/check.sh          # everything CI enforces, one command
 ```
+
+Setup once: `python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt`.
+Rules for agents and humans: `AGENTS.md`, architecture: `docs/ARCHITECTURE.md`,
+workflow: `docs/AI_WORKFLOW.md`.
 
 TTL follow-up local run: **85 passed**, one existing Starlette/httpx
 deprecation warning; expired-card DOM tests pass for done/failed jobs. TTL tests

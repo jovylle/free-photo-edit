@@ -95,9 +95,13 @@ _store: CreditsStore | None = None
 _store_lock = threading.Lock()
 
 IP_MINUTE_LIMIT = int(os.environ.get("IP_MINUTE_LIMIT", "3"))
-# Per IP+UA (device) so friends behind one home WiFi each get their own
-# daily bucket. UA is spoofable — fine for a generosity cap, not security.
+# Per-IP daily ceiling. This is the one a VPN-less abuser cannot dodge by
+# opening another browser or switching User-Agent on the same network.
 IP_DAILY_LIMIT = int(os.environ.get("IP_DAILY_LIMIT", "24"))
+# Per IP+UA (device) so friends behind one home WiFi each get their own
+# daily bucket and one browser cannot eat the household's whole day.
+# UA is spoofable — fine for a generosity cap, not security.
+DEVICE_DAILY_LIMIT = int(os.environ.get("DEVICE_DAILY_LIMIT", "12"))
 MAX_DAILY_EDITS = int(os.environ.get("MAX_DAILY_EDITS", "60"))
 
 TURNSTILE_SITEKEY = os.environ.get("TURNSTILE_SITEKEY", "")
@@ -504,9 +508,14 @@ async def edit(
         raise HTTPException(
             429, "too many tries — wait a minute and try again",
             headers={"Retry-After": "60"})
-    if not paying and store.ip_job_count_since(ip, now - 86400, ua=device) >= IP_DAILY_LIMIT:
+    if not paying and store.ip_job_count_since(ip, now - 86400) >= IP_DAILY_LIMIT:
         raise HTTPException(
-            429, f"this device has used its {IP_DAILY_LIMIT} free runs today",
+            429, f"this network has used its {IP_DAILY_LIMIT} free runs today",
+            headers={"Retry-After": "3600"})
+    if not paying and device and store.ip_job_count_since(
+            ip, now - 86400, ua=device) >= DEVICE_DAILY_LIMIT:
+        raise HTTPException(
+            429, f"this device has used its {DEVICE_DAILY_LIMIT} free runs today",
             headers={"Retry-After": "3600"})
     if len(prompt) > MAX_PROMPT_CHARS:
         raise HTTPException(
