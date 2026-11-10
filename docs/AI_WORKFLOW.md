@@ -48,26 +48,40 @@ Protected files (`pyproject.toml`, `.github/workflows/`, `CODEOWNERS`,
 `.ai/baseline.json`, the guard scripts) need the `config-change` PR label. The
 label is a human saying "this change to the checks is intended".
 
-## Branch protection, honestly
+## Branch protection (verified 2026-11-11)
 
-This repo is private on GitHub Free, where branch protection **and** rulesets are
-unavailable — both endpoints return `403 Upgrade to GitHub Pro`. So what actually
-protects `master` and `dev` is not GitHub:
+`dev` and `master` both have GitHub branch protection **enabled** — this was
+verified by reading `gh api repos/jovylle/free-photo-edit/branches/dev/protection`
+and by a real merge being blocked until the required check reported.
 
-| Gate | Where | Strength |
-|---|---|---|
-| `.githooks/pre-push` | local, per clone (`git config core.hooksPath .githooks`) | blocks direct pushes and branch deletes; `--no-verify` bypasses |
-| CI on every PR and push | `.github/workflows/ci.yml` | reports a red `check`; cannot block a merge |
-| CODEOWNERS | `CODEOWNERS` | auto-requests review on PRs; cannot require approval |
-| `config-change` label | `scripts/guard.py` | PR fails `check` if protected files change without the label |
+| Setting | Value |
+|---|---|
+| Pull request required | yes |
+| Required status check | `check` (the CI job name) |
+| Required approvals | 0 — a solo maintainer cannot approve their own PR |
+| CODEOWNERS review required | no (CODEOWNERS only auto-requests a reviewer) |
+| Force pushes | blocked |
+| Branch deletion | blocked |
+| Admin bypass | allowed (`enforce_admins: false`) |
 
-Consequences: a human can still merge red CI or force-push, and a fresh clone
-that never ran the `hooksPath` command has no pre-push guard. The guardrails are
-only as strong as the clone they run in.
+**Gotcha that cost an hour:** this endpoint twice returned `403 Upgrade to GitHub
+Pro or make this repository public` on this private/free repo *while protection
+was active and enforcing*. A 403 there is not proof of absence. Confirm with
+`gh pr view <n> --json mergeStateStatus`, or re-read the endpoint.
 
-If the repo goes public or the account moves to Pro, enable: PR required, required
-status check `check`, required CODEOWNERS review, no force-push. Nothing in this
-repo needs to change to support that.
+**CI job names are load-bearing.** The required context is the *job* name in
+`.github/workflows/ci.yml`. Renaming the job without updating protection silently
+blocks every PR — exactly what happened when `test` became `check`. Rename both
+in the same change:
+
+```bash
+printf '{"strict": false, "contexts": ["check"]}' \
+  | gh api -X PATCH repos/jovylle/free-photo-edit/branches/dev/protection/required_status_checks --input -
+```
+
+Client-side, `.githooks/pre-push` still refuses direct pushes to `dev`/`master`
+as a fast early warning; the server enforces it as well. If a second maintainer
+joins, raise required approvals to 1 and require CODEOWNERS review.
 
 ## Monthly, 15 minutes
 
