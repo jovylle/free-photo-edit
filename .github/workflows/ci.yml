@@ -1,0 +1,26 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [dev, master]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      # Isolated fixtures only: never a real ledger, storage path or provider key.
+      FREE_PHOTO_EDIT_DB: ${{ runner.temp }}/credits.db
+      FREE_PHOTO_EDIT_STORAGE: ${{ runner.temp }}/storage
+      TURNSTILE_SECRET: ""
+      TURNSTILE_SITEKEY: ""
+      OPENAI_API_KEY: ""
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt pytest
+      - run: python -m pytest api -q
+      - run: node tests/expired-card.cjs
+      - run: node --check web/app.js

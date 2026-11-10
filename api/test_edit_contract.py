@@ -114,6 +114,89 @@ def test_empty_prompt_rejected(client):
     assert FakeEngine.calls == 0
 
 
+@pytest.mark.parametrize("extra_field", ["other"])
+def test_extra_upload_rejected_without_debit(client, extra_field):
+    r = _edit(client, "extra", files=[
+        ("image", ("in.png", PNG, "image/png")),
+        (extra_field, ("extra.png", PNG, "image/png")),
+    ])
+    assert r.status_code == 400, r.text
+    assert FakeEngine.calls == 0
+    assert server.get_store().balance("extra") == 3
+    assert server.get_store().user_jobs("extra") == []
+
+
+def test_multiple_photos_accepted(client):
+    r = _edit(client, "multi", files=[
+        ("image", ("a.png", PNG, "image/png")),
+        ("image", ("b.png", PNG, "image/png")),
+    ])
+    assert r.status_code == 202, r.text
+    job_id = r.json()["job_id"]
+    for index in (0, 1):
+        assert client.get(f"/api/result/{job_id}/input/{index}").status_code == 200
+    assert client.get(f"/api/result/{job_id}/input/2").status_code == 404
+
+
+@pytest.mark.parametrize("failure", ["mkdir", "write_bytes", "thread_start"])
+def test_setup_failure_refunds_and_releases_slots(client, monkeypatch, failure):
+    def boom(*args, **kwargs):
+        raise OSError("setup boom")
+
+    with monkeypatch.context() as patch:
+        if failure == "thread_start":
+            # Do not patch Thread.start globally: TestClient also needs threads.
+            class BrokenThread:
+                def __init__(self, *args, **kwargs):
+                    pass
+
+                start = boom
+
+            from types import SimpleNamespace
+            patch.setattr(server, "threading", SimpleNamespace(
+                Thread=BrokenThread, Semaphore=server.threading.Semaphore))
+        else:
+            patch.setattr(Path, failure, boom)
+        r = _edit(client, "setup")
+    assert r.status_code == 502, r.text
+    assert FakeEngine.calls == 0
+    store = server.get_store()
+    assert store.balance("setup") == 3
+    job = store.user_jobs("setup")[0]
+    assert job["status"] == "failed"
+    assert "setup boom" in store.get_job(job["id"])["error"]
+    poll = client.get(f"/api/result/{job['id']}")
+    assert poll.status_code == 200
+    assert poll.json()["status"] == "failed"
+    for sem, count in [(server._slots_for("testclient"), 3), (server._global_slots, 6)]:
+        for _ in range(count):
+            assert sem.acquire(blocking=False)
+        assert not sem.acquire(blocking=False)
+        for _ in range(count):
+            sem.release()
+    retry = _edit(client, "setup")
+    assert retry.status_code == 202, retry.text
+    _wait_done(client, retry.json()["job_id"])
+
+
+@pytest.mark.parametrize("files", [{}, {"other": ("in.png", PNG, "image/png")},
+                                  {"image": ("in.png", b"", "image/png")}])
+def test_missing_or_empty_image_rejected(client, files):
+    r = _edit(client, "missing", files=files)
+    assert r.status_code == 400, r.text
+    assert FakeEngine.calls == 0
+    assert server.get_store().balance("missing") == 3
+
+
+@pytest.mark.parametrize("ctype", ["image/jpeg", "image/png", "image/webp"])
+def test_allowed_mime_at_size_limit(client, ctype):
+    payload = PNG + b"\x00" * (server.MAX_FILE_BYTES - len(PNG))
+    r = _edit(client, "boundary", files=_file(payload, ctype))
+    assert r.status_code == 202, r.text
+    _wait_done(client, r.json()["job_id"])
+    assert server.get_store().balance("boundary") == 2
+
+
 def test_credits_endpoint(client):
     r = client.get("/api/credits", params={"user": "ann"})
     assert r.status_code == 200
@@ -129,3 +212,22 @@ def test_jobs_history(client):
     jobs = h.json()["jobs"]
     assert len(jobs) >= 1
     assert jobs[0]["status"] == "done"
+
+
+def test_html_revalidates_but_api_does_not(client):
+    assert client.get("/").headers.get("cache-control") == "no-cache"
+    assert client.get("/index.html").headers.get("cache-control") == "no-cache"
+    assert "cache-control" not in client.get("/api/config").headers
+
+
+def test_cors_allows_only_configured_origin(client, monkeypatch):
+    monkeypatch.setenv("CORS_ORIGINS", "https://free-photo-edit-dev.pages.dev")
+    ok = client.get("/api/config", headers={"Origin": "https://free-photo-edit-dev.pages.dev"})
+    assert ok.headers.get("access-control-allow-origin") == "https://free-photo-edit-dev.pages.dev"
+    bad = client.get("/api/config", headers={"Origin": "https://evil.example"})
+    assert "access-control-allow-origin" not in bad.headers
+    pre = client.options("/api/edit", headers={
+        "Origin": "https://free-photo-edit-dev.pages.dev",
+        "Access-Control-Request-Method": "POST"})
+    assert pre.status_code == 204
+    assert pre.headers.get("access-control-allow-origin") == "https://free-photo-edit-dev.pages.dev"

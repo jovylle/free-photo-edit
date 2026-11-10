@@ -23,6 +23,9 @@ punishes legit households, and a self-typed user id was never identity.
 from __future__ import annotations
 
 import os
+import asyncio
+from contextlib import asynccontextmanager
+import logging
 import hashlib
 import threading
 import time
@@ -31,15 +34,17 @@ import uuid
 from pathlib import Path
 
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, Response, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.datastructures import UploadFile as StarletteUploadFile
 
 import httpx
 
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
-from .credits import FREE_CREDITS, CreditsStore, OutOfCredits
+from .credits import DailyLimitReached, FREE_CREDITS, CreditsStore, OutOfCredits
+from .cleanup import artifacts_expired, sweep, SWEEP_INTERVAL_SECONDS
 from .engines import EngineError, select_engine
 from .prompts import PRESETS, build_edit_prompt, resolve_preset
 
@@ -48,13 +53,40 @@ STORAGE = Path(os.environ.get("FREE_PHOTO_EDIT_STORAGE", API_DIR / "storage"))
 DB_PATH = os.environ.get("FREE_PHOTO_EDIT_DB", str(API_DIR / "credits.db"))
 
 MAX_FILE_BYTES = 5 * 1024 * 1024
+MAX_IMAGES = 5
 MAX_PROMPT_CHARS = 2000
 ALLOWED_MIME = {"image/jpeg", "image/png", "image/webp"}
 ALLOWED_PRESETS = {"background", "clothes", "restore", "custom"}
 
 FREE_NOTE = "3 free edits per user. Outputs up to 1024x1024."
 
-app = FastAPI(title="free-photo-edit api (v1)")
+@asynccontextmanager
+async def lifespan(app):
+    store = get_store()
+    storage = STORAGE
+    stop = threading.Event()
+
+    def run_sweep():
+        try:
+            sweep(store, storage)
+        except Exception:
+            logging.getLogger(__name__).exception("TTL sweep failed; retry next hour")
+
+    def periodic():
+        while not stop.wait(SWEEP_INTERVAL_SECONDS):
+            run_sweep()
+
+    await asyncio.to_thread(run_sweep)
+    worker = threading.Thread(target=periodic, name="fpe-storage-ttl", daemon=True)
+    worker.start()
+    try:
+        yield
+    finally:
+        stop.set()
+        await asyncio.to_thread(worker.join)
+
+
+app = FastAPI(title="free-photo-edit api (v1)", lifespan=lifespan)
 
 _store: CreditsStore | None = None
 _store_lock = threading.Lock()
@@ -134,27 +166,27 @@ def _client_device(request: Request, ip: str) -> str:
     return hashlib.sha256(f"{ip}|{raw}".encode()).hexdigest()[:32]
 
 
-MAX_PER_USER = 3
+MAX_PER_IP = 3
 MAX_GLOBAL = 6
-_user_slots: dict[str, threading.Semaphore] = {}
-_user_slots_guard = threading.Lock()
+_ip_slots: dict[str, threading.Semaphore] = {}
+_ip_slots_guard = threading.Lock()
 _global_slots = threading.Semaphore(MAX_GLOBAL)
 
 
-def _slots_for(user: str) -> threading.Semaphore:
-    with _user_slots_guard:
-        sem = _user_slots.get(user)
+def _slots_for(ip: str) -> threading.Semaphore:
+    with _ip_slots_guard:
+        sem = _ip_slots.get(ip)
         if sem is None:
-            sem = threading.Semaphore(MAX_PER_USER)
-            _user_slots[user] = sem
+            sem = threading.Semaphore(MAX_PER_IP)
+            _ip_slots[ip] = sem
         return sem
 
 
 def reset_slots_for_tests() -> None:
     """Test hook: drop in-memory slot state between tests."""
     global _global_slots
-    with _user_slots_guard:
-        _user_slots.clear()
+    with _ip_slots_guard:
+        _ip_slots.clear()
     _global_slots = threading.Semaphore(MAX_GLOBAL)
 
 
@@ -197,11 +229,11 @@ def config():
 def presets():
     return {"presets": [
         {"id": "background", "label": "🏙 Background",
-         "hint": "New background from your description. 1 photo."},
+         "hint": "New background from your description."},
         {"id": "clothes", "label": "👔 Clothes",
-         "hint": "Change clothing from your description. 1 photo."},
+         "hint": "Change clothing from your description."},
         {"id": "restore", "label": "✨ Restore",
-         "hint": "Fix scratches, noise, blur, faded colors. 1 photo."},
+         "hint": "Fix scratches, noise, blur, faded colors."},
         {"id": "custom", "label": "✏ Custom",
          "hint": "Free-form instruction (Tagalog/English/Bisaya)."},
     ]}
@@ -214,7 +246,10 @@ def result(job_id: str, user: str = Depends(current_user)):
     if job is None:
         raise HTTPException(404, "unknown job")
     base = {"job_id": job_id, "credits_left": store.balance(user),
-            "preset": job["preset"], "created_at": job["created_at"]}
+            "preset": job["preset"], "created_at": job["created_at"],
+            "artifacts_expired": artifacts_expired(job)}
+    if base["artifacts_expired"]:
+        return {**base, "status": job["status"], "image_url": None}
     if job["status"] != "done":
         return {**base, "status": job["status"], "image_url": None}
     png = STORAGE / job_id / "output.png"
@@ -228,15 +263,19 @@ _INPUT_MIME = {".jpg": "image/jpeg", ".jpeg": "image/jpeg",
                ".png": "image/png", ".webp": "image/webp"}
 
 
-@app.get("/api/result/{job_id}/input/0")
-def result_input(job_id: str):
+@app.get("/api/result/{job_id}/input/{index}")
+def result_input(job_id: str, index: int):
+    if not 0 <= index < MAX_IMAGES:
+        raise HTTPException(404, "input not found")
     store = get_store()
     job = store.get_job(job_id)
     if job is None:
         raise HTTPException(404, "unknown job")
+    if artifacts_expired(job):
+        raise HTTPException(410, "job artifacts expired after seven days")
     job_dir = STORAGE / job_id
     for ext, mime in _INPUT_MIME.items():
-        p = job_dir / f"input_0{ext}"
+        p = job_dir / f"input_{index}{ext}"
         if p.exists():
             return FileResponse(p, media_type=mime)
     raise HTTPException(404, "input not found")
@@ -248,11 +287,14 @@ def jobs(user: str = Depends(current_user)):
     items = []
     for j in store.user_jobs(user, limit=30):
         job_id = j["id"]
+        expired = artifacts_expired(j)
         image_url = (f"/api/result/{job_id}/file"
-                     if j["status"] == "done" else None)
-        inputs = [f"/api/result/{job_id}/input/0"]
+                     if j["status"] == "done" and not expired else None)
+        inputs = [] if expired else [f"/api/result/{job_id}/input/{i}" for i in range(MAX_IMAGES)
+                  if any((STORAGE / job_id / f"input_{i}{ext}").exists()
+                         for ext in _INPUT_MIME)]
         items.append({**j, "job_id": job_id, "inputs": inputs,
-                      "image_url": image_url})
+                      "image_url": image_url, "artifacts_expired": expired})
     return {"user": user, "fetched_at": time.time(), "jobs": items}
 
 
@@ -262,6 +304,8 @@ def result_file(job_id: str):
     job = store.get_job(job_id)
     if job is None:
         raise HTTPException(404, "unknown job")
+    if artifacts_expired(job):
+        raise HTTPException(410, "job artifacts expired after seven days")
     png = STORAGE / job_id / "output.png"
     if job["status"] != "done" or not png.exists():
         raise HTTPException(404, "result not ready")
@@ -276,7 +320,7 @@ async def edit(
     preset: str = Form("custom"),
     user: str = Form("dev"),
     cf_token: str = Form(default="", alias="cf-turnstile-response"),
-    image: UploadFile = File(...),
+    image: list[UploadFile] | None = File(None),
 ):
     user = (user or "dev").strip() or "dev"
     preset = (preset or "custom").strip().lower()
@@ -317,64 +361,93 @@ async def edit(
         raise HTTPException(400, str(e))
     if not instruction:
         raise HTTPException(400, "prompt must not be empty")
-    if image.content_type not in ALLOWED_MIME:
-        raise HTTPException(
-            400, f"unsupported type {image.content_type}: jpeg/png/webp only")
-    data = await image.read()
-    if len(data) > MAX_FILE_BYTES:
-        raise HTTPException(400, f"file too large: max 5MB "
-                                 f"(got {len(data)} bytes)")
-    if not data:
-        raise HTTPException(400, "empty file rejected")
+    form = await request.form()
+    if not image or sum(isinstance(value, StarletteUploadFile)
+                        for _, value in form.multi_items()) != len(image):
+        raise HTTPException(400, "one to five image uploads required")
+    if len(image) > MAX_IMAGES:
+        raise HTTPException(400, f"too many photos: max {MAX_IMAGES}")
+    images = []
+    for photo in image:
+        if photo.content_type not in ALLOWED_MIME:
+            raise HTTPException(
+                400, f"unsupported type {photo.content_type}: jpeg/png/webp only")
+        data = await photo.read(MAX_FILE_BYTES + 1)
+        if len(data) > MAX_FILE_BYTES:
+            raise HTTPException(400, "file too large: max 5MB")
+        if not data:
+            raise HTTPException(400, "empty file rejected")
+        images.append(data)
 
-    user_sem = _slots_for(user)
-    if not user_sem.acquire(blocking=False):
+
+    job_id = uuid.uuid4().hex[:12]
+    ip_sem = _slots_for(ip)
+    if not ip_sem.acquire(blocking=False):
         raise HTTPException(
-            429, f"{MAX_PER_USER} concurrent jobs per user — try again shortly",
+            429, f"{MAX_PER_IP} concurrent jobs per IP — try again shortly",
             headers={"Retry-After": "10"})
     if not _global_slots.acquire(blocking=False):
-        user_sem.release()
+        ip_sem.release()
         raise HTTPException(
             429, "server is busy (all job slots full) — try again shortly",
             headers={"Retry-After": "15"})
+    debited = False
     try:
-        job_id = uuid.uuid4().hex[:12]
         try:
             credits_left = store.check_and_debit(
-                user, job_id, preset=preset, ip=ip, ua=device, prompt=prompt)
+                user, job_id, preset=preset, ip=ip, ua=device, prompt=prompt,
+                daily_limit=MAX_DAILY_EDITS, since_ts=now - 86400)
         except OutOfCredits:
-            user_sem.release()
+            ip_sem.release()
             _global_slots.release()
             raise HTTPException(402, "out of credits")
+        except DailyLimitReached:
+            ip_sem.release()
+            _global_slots.release()
+            raise HTTPException(
+                503, "today's free budget is used up — try again tomorrow",
+                headers={"Retry-After": "3600"})
 
+        debited = True
         job_dir = STORAGE / job_id
         job_dir.mkdir(parents=True, exist_ok=True)
         ext = {"image/jpeg": ".jpg", "image/png": ".png",
                "image/webp": ".webp"}
-        (job_dir / f"input_0{ext[image.content_type]}").write_bytes(data)
+        for i, (photo, data) in enumerate(zip(image, images)):
+            (job_dir / f"input_{i}{ext[photo.content_type]}").write_bytes(data)
 
         t = threading.Thread(
             target=_run_job_thread,
-            args=(job_id, user, data, instruction, user),
+            args=(job_id, user, images[0] if len(images) == 1 else images, instruction, ip),
             daemon=True)
         t.start()
     except HTTPException:
         raise
-    except Exception:
-        user_sem.release()
-        _global_slots.release()
+    except Exception as e:
+        try:
+            if debited:
+                store.refund(user, job_id, f"{type(e).__name__}: {e}"[:500])
+        finally:
+            ip_sem.release()
+            _global_slots.release()
+        if debited:
+            raise HTTPException(502, "could not start edit job") from e
         raise
     return {"job_id": job_id, "status": "running", "credits_left": credits_left,
             "note": FREE_NOTE}
 
 
-def _run_job_thread(job_id: str, user: str, input_bytes: bytes,
+def _run_job_thread(job_id: str, user: str, input_bytes: bytes | list[bytes],
                     instruction: str, slot_key: str) -> None:
     """Background worker (daemon thread): engine -> done | failed+refund."""
     store = get_store()
     try:
         try:
             full_prompt = build_edit_prompt(instruction)
+            if isinstance(input_bytes, list):
+                full_prompt += ("\nMultiple reference photos are provided in order. "
+                                "Use them together as requested in the instruction; "
+                                "the first photo is the primary reference.")
             engine = select_engine()
             out_bytes = engine.edit(input_bytes, full_prompt)
             job_dir = STORAGE / job_id
@@ -397,5 +470,41 @@ def _run_job_thread(job_id: str, user: str, input_bytes: bytes,
 
 # Static UI must mount AFTER all /api/* routes (Starlette matches in order).
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
+
+
+def _cors_origins() -> set[str]:
+    """Extra origins allowed to call /api/* (static frontend on another host)."""
+    return {o.strip() for o in os.environ.get("CORS_ORIGINS", "").split(",") if o.strip()}
+
+
+@app.middleware("http")
+async def _cors(request, call_next):
+    origin = request.headers.get("origin", "")
+    allowed = origin if origin and origin in _cors_origins() else ""
+    if allowed and request.method == "OPTIONS":
+        return Response(status_code=204, headers={
+            "Access-Control-Allow-Origin": allowed,
+            "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+            "Access-Control-Allow-Headers": "*",
+            "Access-Control-Max-Age": "600",
+            "Vary": "Origin",
+        })
+    response = await call_next(request)
+    if allowed:
+        response.headers["Access-Control-Allow-Origin"] = allowed
+        response.headers["Vary"] = "Origin"
+    return response
+
+
+@app.middleware("http")
+async def _revalidate_html(request, call_next):
+    """Browsers heuristic-cache HTML, which hides UI changes after a deploy."""
+    response = await call_next(request)
+    path = request.url.path
+    if not path.startswith("/api/") and path.endswith(("/", ".html")):
+        response.headers["Cache-Control"] = "no-cache"
+    return response
+
+
 if WEB_DIR.is_dir():
     app.mount("/", StaticFiles(directory=WEB_DIR, html=True), name="web")

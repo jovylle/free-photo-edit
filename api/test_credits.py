@@ -5,10 +5,16 @@
 from __future__ import annotations
 
 import threading
+import time
 
 import pytest
 
-from free_photo_edit_api.credits import FREE_CREDITS, CreditsStore, OutOfCredits
+from free_photo_edit_api.credits import (
+    FREE_CREDITS,
+    CreditsStore,
+    DailyLimitReached,
+    OutOfCredits,
+)
 
 
 @pytest.fixture()
@@ -71,6 +77,41 @@ def test_concurrent_double_submit_both_debited_once(store):
     [t.join() for t in ts]
     assert errors == []
     assert store.balance("race") == 1
+
+
+def test_daily_limit_is_atomic_across_connections(tmp_path):
+    path = str(tmp_path / "credits.db")
+    first = CreditsStore(path)
+    second = CreditsStore(path)
+    daily_limit = 4
+    since_ts = time.time() - 86400
+    for i in range(daily_limit - 1):
+        first.check_and_debit(f"seed-{i}", f"seed-job-{i}")
+
+    barrier = threading.Barrier(2)
+    outcomes: list[str] = []
+
+    def submit(store: CreditsStore, job_id: str) -> None:
+        barrier.wait()
+        try:
+            store.check_and_debit(
+                job_id, job_id, daily_limit=daily_limit, since_ts=since_ts
+            )
+            outcomes.append("accepted")
+        except DailyLimitReached:
+            outcomes.append("limited")
+
+    threads = [
+        threading.Thread(target=submit, args=(first, "race-a")),
+        threading.Thread(target=submit, args=(second, "race-b")),
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert sorted(outcomes) == ["accepted", "limited"]
+    assert first.count_jobs_since(since_ts) == daily_limit
 
 
 def test_refund_restores_credit_and_marks_failed(store):
