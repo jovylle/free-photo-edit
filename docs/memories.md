@@ -213,8 +213,13 @@
 - `master` stays the default branch by maintainer decision: it is the production
   release pointer, deliberately behind `dev`. PRs must target `dev` explicitly;
   web UI offers `master`.
-- Manual step per new clone: `git config core.hooksPath .githooks`. Branch
-  protection is impossible here (private repo, GitHub Free: protection and
-  rulesets both 403), so `.githooks/pre-push` blocks direct pushes to master/dev
-  instead; CODEOWNERS still auto-requests review. Enable real protection if the
-  repo goes public or the account goes Pro.
+- Manual step per new clone: `git config core.hooksPath .githooks`.
+- CORRECTION (2026-11-11): branch protection IS enabled on `dev` and `master` — PR
+  required, required status check `check`, 0 approvals, force-push and deletion
+  blocked, admin bypass allowed. The earlier "protection impossible" note came
+  from this endpoint returning `403 Upgrade to GitHub Pro` twice on this
+  private/free repo while protection was active and enforcing; do not trust that
+  403. The first merge attempt was blocked because protection still required the
+  pre-rename check name `test`; fixed by PATCHing `required_status_checks` to
+  `check` on both branches. The required context is the CI **job** name — rename
+  the job and the protection together.
