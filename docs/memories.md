@@ -185,3 +185,36 @@
   /api/edit 403s (Turnstile active, fail closed).
 - Privacy page promise note from 2026-10-18 still open: 7-day cleanup is a
   manual command, no automatic deletion yet.
+
+## AI durability guardrails (2026-11-11)
+- Branch `chore/ai-durability-setup`. One command: `scripts/check.sh` (same as CI):
+  ruff ratchet -> mypy ratchet -> structure/layers -> anti-weakening -> pytest -> node.
+- Baseline frozen in `.ai/baseline.json`: 234 `mypy --strict` findings (per file),
+  22 ruff findings (select E4,E7,E9,F,I), 89 tests, 6 `noqa`, 0 type-ignores/skips.
+  Ratchet is per file so a clean new file cannot mask a dirty old one; new files
+  start at zero. Re-freeze only via `python scripts/ratchet.py --update` +
+  `python scripts/guard.py --update`, with the `config-change` PR label.
+- Layers (`scripts/structure.py`, AST-based, no new dep): prompts/credits L0 ->
+  engines/cleanup L1 -> server L2 -> tests/probe_live L3; imports strictly down.
+  A new `api/` module fails until it is assigned a layer and documented.
+- `scripts/guard.py`: new suppressions, lost tests, and edits to protected files
+  (pyproject, workflows, CODEOWNERS, baseline, guard scripts) fail. Locally the
+  `config-change` label equivalent is `ALLOW_PROTECTED=1`; in CI it is the label.
+- Layout is judged from `git ls-files` (+ unignored new files), so caches never
+  trip it. `.mypy_cache/` and `.ruff_cache/` added to `.gitignore`.
+- Debt not fixed (deliberate): 234 mypy + 22 ruff findings, mostly test
+  annotations. Reduce opportunistically when touching a file.
+- Rebased onto `origin/dev` (`d392697`) after finding two things: the branch was
+  2 commits stale, and its `ci.yml` had reintroduced the bug PR #4 fixed —
+  `${{ runner.temp }}` in job-level `env` invalidates the whole workflow, so CI
+  never starts. Rule: `runner.temp` only in step scope; `scripts/check.sh` makes
+  its own `mktemp` dirs, so no step env is needed. Same bug was in `audit.yml`
+  and is fixed; `audit.sh` now exports isolated fixtures itself.
+- `master` stays the default branch by maintainer decision: it is the production
+  release pointer, deliberately behind `dev`. PRs must target `dev` explicitly;
+  web UI offers `master`.
+- Manual step per new clone: `git config core.hooksPath .githooks`. Branch
+  protection is impossible here (private repo, GitHub Free: protection and
+  rulesets both 403), so `.githooks/pre-push` blocks direct pushes to master/dev
+  instead; CODEOWNERS still auto-requests review. Enable real protection if the
+  repo goes public or the account goes Pro.
