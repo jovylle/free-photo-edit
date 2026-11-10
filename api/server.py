@@ -118,12 +118,11 @@ PACKS = {
     "plus": {"label": "Plus", "price": 9900, "credits": 25},
     "pro": {"label": "Pro", "price": 19900, "credits": 60},
 }
-PAYMONGO_API = "https://api.paymongo.com/v2/checkout_sessions"
-PAYMONGO_SECRET_KEY = os.environ.get("PAYMONGO_SECRET_KEY", "")
-PAYMONGO_WEBHOOK_SECRET = os.environ.get("PAYMONGO_WEBHOOK_SECRET", "")
+XENDIT_API = "https://api.xendit.co/sessions"
+XENDIT_SECRET_KEY = os.environ.get("XENDIT_SECRET_KEY", "")
+XENDIT_WEBHOOK_TOKEN = os.environ.get("XENDIT_WEBHOOK_TOKEN", "")
 PAYMENT_SUCCESS_URL = os.environ.get("PAYMENT_SUCCESS_URL", "")
 PAYMENT_CANCEL_URL = os.environ.get("PAYMENT_CANCEL_URL", "")
-WEBHOOK_MAX_AGE = 300  # seconds; signature replay window
 CHECKOUT_PER_HOUR = int(os.environ.get("CHECKOUT_PER_HOUR", "5"))
 EMAIL_RE = re.compile(r"^[^@\s]{1,100}@[^@\s]{1,100}\.[^@\s]{1,100}$")
 
@@ -141,77 +140,62 @@ def _checkout_allowed(ip: str, now: float) -> bool:
         return True
 
 
-class PayMongoError(RuntimeError):
+class XenditError(RuntimeError):
     pass
+
+
+def _xendit_amount(centavos: int) -> int:
+    """Xendit takes whole pesos. The ledger stores what we send, so the
+    webhook compares like-for-like. Confirm the unit on the first sandbox
+    session: the hosted page must read ₱49.00, never ₱4,900 or ₱0.49.
+    """
+    return centavos // 100
 
 
 def _checkout_payload(pack_id: str, user: str, reference: str,
                       email: str) -> dict:
     pack = PACKS[pack_id]
-    return {"data": {"attributes": {
-        "send_email_receipt": False,
-        "show_description": True,
-        "show_line_items": True,
+    amount = _xendit_amount(pack["price"])
+    return {
+        "reference_id": reference,
+        "session_type": "PAY",
+        "mode": "PAYMENT_LINK",
+        "amount": amount,
+        "currency": "PHP",
+        "country": "PH",
         "description": f"Free Photo Edit — {pack['label']}: {pack['credits']} edits",
-        "line_items": [{"currency": "PHP", "amount": pack["price"],
-                        "name": f"{pack['label']} — {pack['credits']} edits",
-                        "quantity": 1}],
-        "payment_method_types": ["gcash", "paymaya", "grab_pay", "card"],
-        "success_url": PAYMENT_SUCCESS_URL,
-        "cancel_url": PAYMENT_CANCEL_URL,
-        "reference_number": reference,
-        "customer_email": email,
-        "metadata": {"user": user, "pack": pack_id},
-    }}}
+        "items": [{"reference_id": pack_id, "type": "DIGITAL_SERVICE",
+                   "name": f"{pack['label']} — {pack['credits']} edits",
+                   "net_unit_amount": amount, "quantity": 1,
+                   "category": "Photo editing"}],
+        "success_return_url": PAYMENT_SUCCESS_URL,
+        "cancel_return_url": PAYMENT_CANCEL_URL,
+        "metadata": {"user": user, "pack": pack_id, "email": email},
+    }
 
 
 def _create_checkout_session(pack_id: str, user: str,
                              email: str) -> tuple[str, str]:
-    """Create a PayMongo Hosted Checkout session -> (session_id, checkout_url)."""
-    r = httpx.post(PAYMONGO_API, auth=(PAYMONGO_SECRET_KEY, ""),
+    """Create a Xendit payment session -> (session_id, checkout_url)."""
+    r = httpx.post(XENDIT_API, auth=(XENDIT_SECRET_KEY, ""),
                    json=_checkout_payload(pack_id, user, uuid.uuid4().hex,
                                           email),
                    timeout=20)
     if r.status_code not in (200, 201):
-        raise PayMongoError(f"PayMongo HTTP {r.status_code}")
+        raise XenditError(f"Xendit HTTP {r.status_code}")
     try:
-        data = r.json()["data"]
-        return data["id"], data["attributes"]["checkout_url"]
+        data = r.json()
+        return data["payment_session_id"], data["payment_link_url"]
     except (KeyError, TypeError):
-        raise PayMongoError("PayMongo bad response") from None
+        raise XenditError("Xendit bad response") from None
 
 
-def _verify_paymongo_signature(header: str, raw: bytes) -> None:
-    """HMAC-SHA256 over f"{t}.{raw_body}", compared to te (test) or li (live)."""
-    if not PAYMONGO_WEBHOOK_SECRET:
+def _verify_webhook_token(token: str) -> None:
+    """Xendit sends a static token in the x-callback-token header."""
+    if not XENDIT_WEBHOOK_TOKEN:
         raise HTTPException(503, "payments not configured")
-    parts = {}
-    for item in header.split(","):
-        key, _, value = item.strip().partition("=")
-        if key and value:
-            parts[key] = value
-    try:
-        ts = int(parts.get("t", ""))
-    except ValueError:
-        raise HTTPException(401, "bad signature") from None
-    if abs(time.time() - ts) > WEBHOOK_MAX_AGE:
-        raise HTTPException(401, "stale signature")
-    digest = hmac.new(PAYMONGO_WEBHOOK_SECRET.encode(),
-                      str(ts).encode() + b"." + raw,
-                      hashlib.sha256).hexdigest()
-    ok = any(parts.get(k) and hmac.compare_digest(digest, parts[k])
-             for k in ("te", "li"))
-    if not ok:
-        raise HTTPException(401, "bad signature")
-
-
-def _paid_amount(session: dict) -> int:
-    attrs = session.get("attributes") or {}
-    return sum(
-        int((p.get("attributes") or {}).get("amount") or 0)
-        for p in attrs.get("payments") or []
-        if (p.get("attributes") or {}).get("status") == "paid"
-    )
+    if not token or not hmac.compare_digest(token, XENDIT_WEBHOOK_TOKEN):
+        raise HTTPException(401, "bad token")
 
 
 class TurnstileError(RuntimeError):
@@ -347,7 +331,7 @@ def presets():
 @app.get("/api/packs")
 def packs():
     # Unconfigured (no keys/URLs): hide the packs instead of offering a 503.
-    if not (PAYMONGO_SECRET_KEY and PAYMENT_SUCCESS_URL and PAYMENT_CANCEL_URL):
+    if not (XENDIT_SECRET_KEY and PAYMENT_SUCCESS_URL and PAYMENT_CANCEL_URL):
         return {"packs": []}
     return {"packs": [{"id": pid, **pack} for pid, pack in PACKS.items()]}
 
@@ -363,7 +347,7 @@ def checkout(request: Request, payload: dict = Body(...)):
         raise HTTPException(400, "user required")
     if not EMAIL_RE.match(email):
         raise HTTPException(400, "valid email required")
-    if not (PAYMONGO_SECRET_KEY and PAYMENT_SUCCESS_URL and PAYMENT_CANCEL_URL):
+    if not (XENDIT_SECRET_KEY and PAYMENT_SUCCESS_URL and PAYMENT_CANCEL_URL):
         raise HTTPException(503, "payments not configured")
     if not _checkout_allowed(_client_ip(request), time.time()):
         raise HTTPException(429, "too many checkout attempts — try again later",
@@ -371,34 +355,39 @@ def checkout(request: Request, payload: dict = Body(...)):
     try:
         session_id, checkout_url = _create_checkout_session(
             pack_id, user, email)
-    except PayMongoError as e:
+    except XenditError as e:
         logging.getLogger(__name__).warning("checkout failed: %s", e)
         raise HTTPException(502, "could not start checkout — try again") from e
     pack = PACKS[pack_id]
+    # Store the amount we actually sent: the webhook compares against it.
     get_store().create_payment(session_id, user, pack_id,
-                               pack["credits"], pack["price"], email)
+                               pack["credits"],
+                               _xendit_amount(pack["price"]), email)
     return {"checkout_url": checkout_url, "session_id": session_id}
 
 
-@app.post("/api/paymongo/webhook")
-async def paymongo_webhook(request: Request):
-    raw = await request.body()  # HMAC is over raw bytes: read before parsing
-    _verify_paymongo_signature(
-        request.headers.get("Paymongo-Signature", ""), raw)
+@app.post("/api/xendit/webhook")
+async def xendit_webhook(request: Request):
+    _verify_webhook_token(request.headers.get("x-callback-token", ""))
     try:
-        attrs = json.loads(raw)["data"]["attributes"]
+        body = json.loads(await request.body())
+        event = body["event"]
+        data = body["data"]
     except (ValueError, KeyError, TypeError):
         raise HTTPException(400, "bad payload") from None
-    if attrs.get("type") != "checkout_session.payment.paid":
+    if event != "payment_session.completed":
         return {"ok": True, "credited": 0}
-    session = attrs.get("data") or {}
-    session_id = session.get("id")
+    session_id = data.get("payment_session_id")
     record = get_store().payment(session_id) if session_id else None
     if record is None:
-        raise HTTPException(400, "unknown session")
+        # 200, not 400: Xendit retries non-2xx six times and a retry cannot
+        # create a row we never recorded. Log it so a real bug is visible.
+        logging.getLogger(__name__).warning(
+            "webhook for unknown session: %s", session_id)
+        return {"ok": True, "credited": 0}
     if record["status"] == "paid":
         return {"ok": True, "credited": 0}  # duplicate delivery: no-op
-    paid_amount = _paid_amount(session)
+    paid_amount = int(data.get("amount") or 0)
     if paid_amount < record["amount"]:
         raise HTTPException(400, "amount mismatch")
     return {"ok": True, "credited":

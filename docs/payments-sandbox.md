@@ -1,33 +1,31 @@
-# PayMongo sandbox verification
+# Xendit sandbox verification
 
-Status: runbook for the remaining rollout steps. No live keys, no real money.
-
-Do this only with **test-mode** keys (`sk_test_...`). Live mode is a separate
-approval at the end of `payments-plan.md`.
+Status: runbook for the remaining rollout steps. Test mode only — no live keys,
+no real money.
 
 ## 0. What you need
 
-- A PayMongo account with test mode activated.
-- This worktree running locally (or the dev API host).
-- A way to make the local API reachable from the internet for the webhook:
-  `cloudflared tunnel --url http://127.0.0.1:8078` (no account needed), or the
-  dev API behind the existing Cloudflare route.
+- A Xendit account in **Test Mode** (active at signup; live needs business KYC).
+- This worktree running locally.
+- `cloudflared` (already installed on this machine).
 
-## 1. Create test keys
+## 1. Keys
 
-PayMongo dashboard → Developers → API keys → **Test mode** → copy the secret
-key (`sk_test_...`). Put it in `.env` (gitignored; never commit):
+1. Dashboard → **Settings → Developers → API keys → Generate secret key**.
+   2FA is required; the key (`xnd_development_...`) is shown **once**.
+2. Same page → **View Webhook Verification Token** (account password + 2FA).
+
+Put both in `.env` (gitignored; never commit):
 
 ```
-PAYMONGO_SECRET_KEY=sk_test_...
-PAYMONGO_WEBHOOK_SECRET=whsk_...        # filled in step 3
-PAYMENT_SUCCESS_URL=http://127.0.0.1:8078/?paid=1
-PAYMENT_CANCEL_URL=http://127.0.0.1:8078/
+XENDIT_SECRET_KEY=xnd_development_...
+XENDIT_WEBHOOK_TOKEN=...
+PAYMENT_SUCCESS_URL=https://<tunnel-host>/?paid=1
+PAYMENT_CANCEL_URL=https://<tunnel-host>/
 ```
 
-`PAYMENT_SUCCESS_URL`/`CANCEL_URL` must be the **frontend** origin (the Pages
-build if you are testing that, otherwise the local app). The webhook must be
-the **API** origin.
+Xendit requires **HTTPS** return URLs, so `http://127.0.0.1` is rejected. Use
+the tunnel host for the frontend as well as the webhook.
 
 ## 2. Start an isolated API
 
@@ -39,66 +37,72 @@ FREE_PHOTO_EDIT_STORAGE=/tmp/fpe-sandbox-storage \
 .venv/bin/python -m uvicorn api.server:app --port 8078
 ```
 
-Check it answers: `curl -s localhost:8078/api/packs` should list the three packs.
+`curl -s localhost:8078/api/packs` should list the three packs.
 
-## 3. Register the webhook
+## 3. Tunnel
 
-1. Start the tunnel: `cloudflared tunnel --url http://127.0.0.1:8078`, copy the
-   `https://<random>.trycloudflare.com` host.
-2. PayMongo dashboard → Developers → Webhooks → **Create**:
-   - URL: `https://<tunnel-host>/api/paymongo/webhook`
-   - Event: **`checkout_session.payment.paid`** only
-3. Copy the webhook's secret (`whsk_...`) into `PAYMONGO_WEBHOOK_SECRET` and
-   restart the API.
+```sh
+cloudflared tunnel --url http://127.0.0.1:8078
+```
 
-A quick tunnel changes hostname on restart; re-point the webhook if you restart
-it. For a repeatable test, use the deployed dev API instead.
+Copy the `https://<random>.trycloudflare.com` host, put it in the two return
+URLs above, and restart the API so it picks them up.
 
-## 4. Buy a pack
+## 4. Register the webhook
 
-1. Open the app, click a pack. With the email field empty the button refuses —
-   fill in any address (e.g. `sandbox@example.com`).
-2. On the PayMongo page use a test card (`4343434343434345`, any future expiry,
-   any CVC), or pick GCash/Maya/GrabPay and press **Authorize** on PayMongo's
-   simulator (no real wallet needed).
-3. **Do not** return to the success URL — close the tab instead. The webhook
-   must still grant the credits:
+Dashboard → **Settings → Developers → Webhooks** → the **Payment Session**
+event → URL `https://<tunnel-host>/api/xendit/webhook` → Test and save.
+
+The probe returns `200` even for an unknown session id, so the save should pass.
+A bad or missing `x-callback-token` returns `401`.
+
+## 5. Buy a pack
+
+1. Open the tunnel URL, click a pack, fill in an email.
+2. Pay with test card `4000 0000 0000 1000`, any future expiry, any CVV
+   (3DS frictionless). The hosted page must read **₱49.00** — verified once on
+   2026-11-11, re-check if a price changes. If it reads ₱0.49 the amount unit
+   is centavos: make `_xendit_amount` return `centavos` unchanged, restart,
+   and repeat this step.
+3. **Close the tab without returning.** The webhook must still grant credits:
 
 ```sh
 curl -s "localhost:8078/api/credits?user=<the browser's freephotoedit_user>"
 ```
 
-Find that token in the browser's localStorage, or watch the API log for the
+Find the token in the browser's localStorage, or watch the API log for the
 webhook POST. Balance should be 3 free + the pack's edits.
 
-Reopen the app with `?paid=1` to see the "Confirming your payment…" poll end in
+Reopen the app with `?paid=1` to see "Confirming your payment…" end in
 "Credits added".
 
-## 5. Duplicate and forged deliveries
+## 6. Duplicate and forged deliveries
 
-Use the real session id (returned by `POST /api/checkout`, also `session_id` in
-the browser network tab) and the pack price in centavos (Starter = `4900`):
+Create a session from the app (click a pack) but **do not pay it** — that is the
+`pending` row the helper needs. The amount is what the server sent to Xendit
+(Starter = `49`; see the `payments` row if unsure).
 
 ```sh
-export PAYMONGO_WEBHOOK_SECRET=whsk_...
-scripts/paymongo_webhook_test.py --session cs_... --amount 4900 --mode duplicate
-scripts/paymongo_webhook_test.py --session cs_... --amount 4900 --mode forged
-scripts/paymongo_webhook_test.py --session cs_... --amount 4900 --mode stale
-scripts/paymongo_webhook_test.py --session cs_... --amount 4900 --mode low
+export XENDIT_WEBHOOK_TOKEN=...
+scripts/xendit_webhook_test.py --session ps_... --amount 49 --mode valid
+scripts/xendit_webhook_test.py --session ps_... --amount 49 --mode duplicate
+scripts/xendit_webhook_test.py --session ps_... --amount 49 --mode forged
+scripts/xendit_webhook_test.py --session ps_... --amount 48 --mode low
+scripts/xendit_webhook_test.py --session ps_x --amount 49 --mode unknown
 ```
 
 | Mode | Expected |
 | --- | --- |
-| `valid` | 200, `credited` > 0 (use a fresh, unpaid session) |
+| `valid` | 200, `credited` > 0 (fresh, unpaid session) |
 | `duplicate` | 200 then 200, second `credited` is 0, balance unchanged |
 | `forged` | 401, no credit |
-| `stale` | 401, no credit |
 | `low` | 400, no credit |
+| `unknown` | 200, `credited` 0 (no retry storm) |
 
-The script exits non-zero on any mismatch, so it is safe for a release check.
+The script exits non-zero on any mismatch, so it is safe as a release check.
 `--url` points at a deployed dev API when you are not local.
 
-## 6. Confirm the ledger
+## 7. Confirm the ledger
 
 ```sh
 sqlite3 /tmp/fpe-sandbox.db \
@@ -109,16 +113,16 @@ A paid session has `status='paid'`, a non-null `paid_at`, and the user's row has
 `paid_total` equal to the credits bought once. Duplicate deliveries must not
 change either number.
 
-## 7. Reset
+## 8. Reset
 
 Delete `/tmp/fpe-sandbox.db` and `/tmp/fpe-sandbox-storage`. Remove the tunnel's
-webhook in the PayMongo dashboard. Leave `.env` on test keys until live mode is
+webhook in the Xendit dashboard. Leave `.env` on test keys until live mode is
 approved; never put live keys in the dev environment.
 
 ## Known limits
 
 - Checkout rate limiting is per API process and per hour (5); restarting resets it.
-- Abandoned sessions stay `pending` forever; that is harmless and no cleanup job
-  exists.
-- The buyer's identity is still the localStorage token plus the checkout email;
-  the email is for manual recovery, not login.
+- A quick tunnel changes hostname on restart; re-point the webhook and the two
+  return URLs if you restart it. The deployed dev API avoids this.
+- The webhook token is static (no timestamp). Replays are harmless only because
+  a duplicate delivery is a no-op.

@@ -284,7 +284,7 @@ class CreditsStore:
 
     def create_payment(self, session_id: str, user: str, pack: str,
                        credits: int, amount: int, email: str = "") -> None:
-        """Record a pending PayMongo checkout session (server-side price).
+        """Record a pending Xendit checkout session (server-side price).
 
         email is the buyer-supplied recovery address; it is never used to
         grant credits, only to find a stranded balance at support time.

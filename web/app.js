@@ -160,7 +160,7 @@
       const data = await r.json().catch(() => ({}));
       if (!r.ok || !data.checkout_url)
         throw new Error(data.detail || ("checkout failed: " + r.status));
-      location.href = data.checkout_url; // PayMongo Hosted Checkout
+      location.href = data.checkout_url; // Xendit hosted checkout
     } catch (e) {
       setBuyStatus("Could not start checkout: " + e.message, true);
       btn.disabled = false;
