@@ -10,8 +10,6 @@ jobs:
     runs-on: ubuntu-latest
     env:
       # Isolated fixtures only: never a real ledger, storage path or provider key.
-      FREE_PHOTO_EDIT_DB: ${{ runner.temp }}/credits.db
-      FREE_PHOTO_EDIT_STORAGE: ${{ runner.temp }}/storage
       TURNSTILE_SECRET: ""
       TURNSTILE_SITEKEY: ""
       OPENAI_API_KEY: ""
@@ -21,6 +19,10 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -r requirements.txt pytest
+      # runner.temp is only valid in step scope, not job-level env.
       - run: python -m pytest api -q
+        env:
+          FREE_PHOTO_EDIT_DB: ${{ runner.temp }}/credits.db
+          FREE_PHOTO_EDIT_STORAGE: ${{ runner.temp }}/storage
       - run: node tests/expired-card.cjs
       - run: node --check web/app.js
