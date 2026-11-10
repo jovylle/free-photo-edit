@@ -25,8 +25,11 @@ from __future__ import annotations
 import os
 import asyncio
 from contextlib import asynccontextmanager
+import hmac
+import json
 import logging
 import hashlib
+import re
 import threading
 import time
 import traceback
@@ -34,7 +37,7 @@ import uuid
 from pathlib import Path
 
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, Response, UploadFile
+from fastapi import Body, Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, Response, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.datastructures import UploadFile as StarletteUploadFile
@@ -107,6 +110,108 @@ TURNSTILE_ACTION = "edit"
 TURNSTILE_VERIFY_URL = "https://challenges.cloudflare.com/turnstile/v0/siteverify"
 
 _warned_no_turnstile = False
+
+# --- Paid edit packs (server-side prices; the browser never sends one) ---
+# Amounts are centavos (PHP): ₱49.00 = 4900.
+PACKS = {
+    "starter": {"label": "Starter", "price": 4900, "credits": 10},
+    "plus": {"label": "Plus", "price": 9900, "credits": 25},
+    "pro": {"label": "Pro", "price": 19900, "credits": 60},
+}
+PAYMONGO_API = "https://api.paymongo.com/v2/checkout_sessions"
+PAYMONGO_SECRET_KEY = os.environ.get("PAYMONGO_SECRET_KEY", "")
+PAYMONGO_WEBHOOK_SECRET = os.environ.get("PAYMONGO_WEBHOOK_SECRET", "")
+PAYMENT_SUCCESS_URL = os.environ.get("PAYMENT_SUCCESS_URL", "")
+PAYMENT_CANCEL_URL = os.environ.get("PAYMENT_CANCEL_URL", "")
+WEBHOOK_MAX_AGE = 300  # seconds; signature replay window
+CHECKOUT_PER_HOUR = int(os.environ.get("CHECKOUT_PER_HOUR", "5"))
+EMAIL_RE = re.compile(r"^[^@\s]{1,100}@[^@\s]{1,100}\.[^@\s]{1,100}$")
+
+_checkout_hits: dict[str, list[float]] = {}
+_checkout_guard = threading.Lock()
+
+
+def _checkout_allowed(ip: str, now: float) -> bool:
+    with _checkout_guard:
+        hits = [t for t in _checkout_hits.get(ip, []) if t > now - 3600]
+        _checkout_hits[ip] = hits
+        if len(hits) >= CHECKOUT_PER_HOUR:
+            return False
+        hits.append(now)
+        return True
+
+
+class PayMongoError(RuntimeError):
+    pass
+
+
+def _checkout_payload(pack_id: str, user: str, reference: str,
+                      email: str) -> dict:
+    pack = PACKS[pack_id]
+    return {"data": {"attributes": {
+        "send_email_receipt": False,
+        "show_description": True,
+        "show_line_items": True,
+        "description": f"Free Photo Edit — {pack['label']}: {pack['credits']} edits",
+        "line_items": [{"currency": "PHP", "amount": pack["price"],
+                        "name": f"{pack['label']} — {pack['credits']} edits",
+                        "quantity": 1}],
+        "payment_method_types": ["gcash", "paymaya", "grab_pay", "card"],
+        "success_url": PAYMENT_SUCCESS_URL,
+        "cancel_url": PAYMENT_CANCEL_URL,
+        "reference_number": reference,
+        "customer_email": email,
+        "metadata": {"user": user, "pack": pack_id},
+    }}}
+
+
+def _create_checkout_session(pack_id: str, user: str,
+                             email: str) -> tuple[str, str]:
+    """Create a PayMongo Hosted Checkout session -> (session_id, checkout_url)."""
+    r = httpx.post(PAYMONGO_API, auth=(PAYMONGO_SECRET_KEY, ""),
+                   json=_checkout_payload(pack_id, user, uuid.uuid4().hex,
+                                          email),
+                   timeout=20)
+    if r.status_code not in (200, 201):
+        raise PayMongoError(f"PayMongo HTTP {r.status_code}")
+    try:
+        data = r.json()["data"]
+        return data["id"], data["attributes"]["checkout_url"]
+    except (KeyError, TypeError):
+        raise PayMongoError("PayMongo bad response") from None
+
+
+def _verify_paymongo_signature(header: str, raw: bytes) -> None:
+    """HMAC-SHA256 over f"{t}.{raw_body}", compared to te (test) or li (live)."""
+    if not PAYMONGO_WEBHOOK_SECRET:
+        raise HTTPException(503, "payments not configured")
+    parts = {}
+    for item in header.split(","):
+        key, _, value = item.strip().partition("=")
+        if key and value:
+            parts[key] = value
+    try:
+        ts = int(parts.get("t", ""))
+    except ValueError:
+        raise HTTPException(401, "bad signature") from None
+    if abs(time.time() - ts) > WEBHOOK_MAX_AGE:
+        raise HTTPException(401, "stale signature")
+    digest = hmac.new(PAYMONGO_WEBHOOK_SECRET.encode(),
+                      str(ts).encode() + b"." + raw,
+                      hashlib.sha256).hexdigest()
+    ok = any(parts.get(k) and hmac.compare_digest(digest, parts[k])
+             for k in ("te", "li"))
+    if not ok:
+        raise HTTPException(401, "bad signature")
+
+
+def _paid_amount(session: dict) -> int:
+    attrs = session.get("attributes") or {}
+    return sum(
+        int((p.get("attributes") or {}).get("amount") or 0)
+        for p in attrs.get("payments") or []
+        if (p.get("attributes") or {}).get("status") == "paid"
+    )
 
 
 class TurnstileError(RuntimeError):
@@ -239,6 +344,64 @@ def presets():
     ]}
 
 
+@app.get("/api/packs")
+def packs():
+    return {"packs": [{"id": pid, **pack} for pid, pack in PACKS.items()]}
+
+
+@app.post("/api/checkout")
+def checkout(request: Request, payload: dict = Body(...)):
+    pack_id = str(payload.get("pack") or "").strip()
+    user = str(payload.get("user") or "").strip()
+    email = str(payload.get("email") or "").strip()
+    if pack_id not in PACKS:
+        raise HTTPException(400, "unknown pack")
+    if not user or len(user) > 100:
+        raise HTTPException(400, "user required")
+    if not EMAIL_RE.match(email):
+        raise HTTPException(400, "valid email required")
+    if not (PAYMONGO_SECRET_KEY and PAYMENT_SUCCESS_URL and PAYMENT_CANCEL_URL):
+        raise HTTPException(503, "payments not configured")
+    if not _checkout_allowed(_client_ip(request), time.time()):
+        raise HTTPException(429, "too many checkout attempts — try again later",
+                            headers={"Retry-After": "3600"})
+    try:
+        session_id, checkout_url = _create_checkout_session(
+            pack_id, user, email)
+    except PayMongoError as e:
+        logging.getLogger(__name__).warning("checkout failed: %s", e)
+        raise HTTPException(502, "could not start checkout — try again") from e
+    pack = PACKS[pack_id]
+    get_store().create_payment(session_id, user, pack_id,
+                               pack["credits"], pack["price"], email)
+    return {"checkout_url": checkout_url, "session_id": session_id}
+
+
+@app.post("/api/paymongo/webhook")
+async def paymongo_webhook(request: Request):
+    raw = await request.body()  # HMAC is over raw bytes: read before parsing
+    _verify_paymongo_signature(
+        request.headers.get("Paymongo-Signature", ""), raw)
+    try:
+        attrs = json.loads(raw)["data"]["attributes"]
+    except (ValueError, KeyError, TypeError):
+        raise HTTPException(400, "bad payload") from None
+    if attrs.get("type") != "checkout_session.payment.paid":
+        return {"ok": True, "credited": 0}
+    session = attrs.get("data") or {}
+    session_id = session.get("id")
+    record = get_store().payment(session_id) if session_id else None
+    if record is None:
+        raise HTTPException(400, "unknown session")
+    if record["status"] == "paid":
+        return {"ok": True, "credited": 0}  # duplicate delivery: no-op
+    paid_amount = _paid_amount(session)
+    if paid_amount < record["amount"]:
+        raise HTTPException(400, "amount mismatch")
+    return {"ok": True, "credited":
+            get_store().mark_paid(session_id, paid_amount)}
+
+
 @app.get("/api/result/{job_id}")
 def result(job_id: str, user: str = Depends(current_user)):
     store = get_store()
@@ -337,7 +500,11 @@ async def edit(
         _warned_no_turnstile = True
         print("WARN: TURNSTILE_SECRET unset — bot check OFF (dev only)")
     now = time.time()
-    if store.count_jobs_since(now - 86400) >= MAX_DAILY_EDITS:
+    # Free-budget gates (global cap + per-device daily) apply only to users
+    # who have never paid. A paid balance is finite; the per-minute IP limit,
+    # Turnstile and upload validation still apply to everyone.
+    paying = store.paid_total(user) > 0 and store.balance(user) > 0
+    if not paying and store.count_jobs_since(now - 86400) >= MAX_DAILY_EDITS:
         raise HTTPException(
             503, "today's free budget is used up — try again tomorrow",
             headers={"Retry-After": "3600"})
@@ -345,7 +512,7 @@ async def edit(
         raise HTTPException(
             429, "too many tries — wait a minute and try again",
             headers={"Retry-After": "60"})
-    if store.ip_job_count_since(ip, now - 86400, ua=device) >= IP_DAILY_LIMIT:
+    if not paying and store.ip_job_count_since(ip, now - 86400, ua=device) >= IP_DAILY_LIMIT:
         raise HTTPException(
             429, f"this device has used its {IP_DAILY_LIMIT} free runs today",
             headers={"Retry-After": "3600"})
@@ -396,7 +563,8 @@ async def edit(
         try:
             credits_left = store.check_and_debit(
                 user, job_id, preset=preset, ip=ip, ua=device, prompt=prompt,
-                daily_limit=MAX_DAILY_EDITS, since_ts=now - 86400)
+                daily_limit=None if paying else MAX_DAILY_EDITS,
+                since_ts=now - 86400)
         except OutOfCredits:
             ip_sem.release()
             _global_slots.release()

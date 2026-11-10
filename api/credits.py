@@ -46,6 +46,26 @@ class CreditsStore:
             "prompt TEXT NOT NULL DEFAULT '', "
             "error TEXT NOT NULL DEFAULT '')"
         )
+        self._db.execute(
+            "CREATE TABLE IF NOT EXISTS payments("
+            "session_id TEXT PRIMARY KEY, user TEXT NOT NULL, "
+            "pack TEXT NOT NULL, credits INTEGER NOT NULL, "
+            "amount INTEGER NOT NULL, status TEXT NOT NULL, "
+            "created_at REAL NOT NULL, paid_at REAL, "
+            "email TEXT NOT NULL DEFAULT '')"
+        )
+        try:
+            self._db.execute(
+                "ALTER TABLE payments ADD COLUMN"
+                " email TEXT NOT NULL DEFAULT ''")
+        except sqlite3.OperationalError:
+            pass  # column already exists
+        try:
+            self._db.execute(
+                "ALTER TABLE users ADD COLUMN"
+                " paid_total INTEGER NOT NULL DEFAULT 0")
+        except sqlite3.OperationalError:
+            pass  # column already exists (pre-migration DB)
         for _col, _ddl in (
             ("terminal_at", "ALTER TABLE jobs ADD COLUMN terminal_at REAL"),
             ("preset", "ALTER TABLE jobs ADD COLUMN preset TEXT NOT NULL DEFAULT 'custom'"),
@@ -253,6 +273,97 @@ class CreditsStore:
                 "SELECT COUNT(*) FROM jobs WHERE created_at>=?",
                 (since_ts,)).fetchone()
         return int(row[0]) if row else 0
+
+    def paid_total(self, user: str) -> int:
+        """Edits this user has ever purchased (0 never paid)."""
+        with self._lock:
+            row = self._db.execute(
+                "SELECT paid_total FROM users WHERE id=?", (user,)
+            ).fetchone()
+        return int(row[0]) if row else 0
+
+    def create_payment(self, session_id: str, user: str, pack: str,
+                       credits: int, amount: int, email: str = "") -> None:
+        """Record a pending PayMongo checkout session (server-side price).
+
+        email is the buyer-supplied recovery address; it is never used to
+        grant credits, only to find a stranded balance at support time.
+        """
+        with self._lock:
+            self._db.execute(
+                "INSERT INTO payments(session_id, user, pack, credits, amount,"
+                " status, created_at, email) VALUES(?,?,?,?,?,'pending',?,?)",
+                (session_id, user, pack, credits, amount, time.time(), email),
+            )
+            self._db.commit()
+
+    def payment(self, session_id: str) -> dict | None:
+        with self._lock:
+            row = self._db.execute(
+                "SELECT session_id, user, pack, credits, amount, status,"
+                " created_at, paid_at, email FROM payments WHERE session_id=?",
+                (session_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return {"session_id": row[0], "user": row[1], "pack": row[2],
+                "credits": row[3], "amount": row[4], "status": row[5],
+                "created_at": row[6], "paid_at": row[7], "email": row[8]}
+
+    def mark_paid(self, session_id: str, paid_amount: int) -> int:
+        """Atomically mark a checkout paid and add its edits to the user.
+
+        Returns the credited amount, or 0 when already paid (duplicate
+        webhook) or when paid_amount is below the recorded price.
+        Raises KeyError for an unknown session.
+        """
+        with self._lock:
+            self._db.execute("BEGIN IMMEDIATE")
+            try:
+                row = self._db.execute(
+                    "SELECT user, credits, amount, status FROM payments"
+                    " WHERE session_id=?", (session_id,),
+                ).fetchone()
+                if row is None:
+                    self._db.execute("ROLLBACK")
+                    raise KeyError(session_id)
+                user, credits, amount, status = (
+                    row[0], int(row[1]), int(row[2]), row[3])
+                cur = None
+                if status == "pending" and paid_amount >= amount:
+                    cur = self._db.execute(
+                        "UPDATE payments SET status='paid', paid_at=?"
+                        " WHERE session_id=? AND status='pending'",
+                        (time.time(), session_id),
+                    )
+                if cur is None or cur.rowcount != 1:
+                    self._db.execute("ROLLBACK")
+                    return 0
+                urow = self._db.execute(
+                    "SELECT 1 FROM users WHERE id=?", (user,)
+                ).fetchone()
+                if urow is None:
+                    self._db.execute(
+                        "INSERT INTO users(id, credits, created_at, paid_total)"
+                        " VALUES(?,?,?,?)",
+                        (user, FREE_CREDITS + credits, time.time(), credits),
+                    )
+                else:
+                    self._db.execute(
+                        "UPDATE users SET credits=credits+?,"
+                        " paid_total=paid_total+? WHERE id=?",
+                        (credits, credits, user),
+                    )
+                self._db.execute("COMMIT")
+                return credits
+            except KeyError:
+                raise
+            except Exception:
+                try:
+                    self._db.execute("ROLLBACK")
+                except sqlite3.Error:
+                    pass
+                raise
 
     def set_credits(self, user: str, n: int) -> None:
         """Test/admin helper: force a user's balance."""

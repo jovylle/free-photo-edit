@@ -45,6 +45,9 @@ check and hostname/action validation.
 | `GET` | `/api/credits?user=` | `{user, credits_left}`. Read routes accept `X-User` or `?user=`; POST uses the multipart `user`. |
 | `GET` | `/api/presets` | `background`, `clothes`, `restore`, `custom`. |
 | `GET` | `/api/config` | `{turnstile_sitekey}` (null when unset); never exposes the secret. |
+| `GET` | `/api/packs` | Server-side edit packs: `{packs: [{id, label, price, credits}]}`, price in centavos. |
+| `POST` | `/api/checkout` | JSON `{pack, user}` → `{checkout_url, session_id}` (PayMongo Hosted Checkout). 400 unknown pack, 429 over 5/hour/IP, 503 when PayMongo keys are unset. |
+| `POST` | `/api/paymongo/webhook` | Raw body + `Paymongo-Signature`; grants pack edits once per paid session. 401 bad/stale signature, 400 unknown session or low amount, 200 for duplicates. |
 
 Validation: 1–5 nonempty JPEG/PNG/WebP uploads, each up to 5 MiB, prompt up to 2000
 characters, known preset. Restore can supply its default instruction; custom

@@ -12,6 +12,8 @@
  *   GET  /api/result/{id}/input/0 -> stored input thumb
  *   GET  /api/jobs?user= -> own history, newest-first
  *   GET  /api/credits?user= -> {credits_left}
+ *   GET  /api/packs -> {packs: [{id,label,price,credits}]} (price = centavos)
+ *   POST /api/checkout {pack, user} -> {checkout_url, session_id}
  */
 (() => {
   "use strict";
@@ -32,7 +34,9 @@
         submitBtn = $("submitBtn"), statusEl = $("status"),
         creditsBadge = $("creditsBadge"), historyEl = $("history"),
         formBody = $("formBody"), editAnother = $("editAnother"),
-        resultBox = $("result"), histCount = $("histCount");
+        resultBox = $("result"), histCount = $("histCount"),
+        packsBox = $("packs"), buyStatus = $("buyStatus"), buyCard = $("buyCard"),
+        buyEmail = $("buyEmail");
 
   let files = [];
   let draftChanged = false;
@@ -120,6 +124,107 @@
       creditsBadge.textContent = "credits left: ?";
       creditsBadge.title = "Could not reach backend: " + e.message;
     }
+  }
+
+  function setBuyStatus(msg, isError) {
+    buyStatus.textContent = msg || "";
+    buyStatus.classList.toggle("error", !!isError);
+  }
+
+  function peso(centavos) {
+    return "₱" + (centavos / 100).toLocaleString("en-PH", {
+      minimumFractionDigits: 2, maximumFractionDigits: 2});
+  }
+
+  function showBuyCard() {
+    buyCard.scrollIntoView({ behavior: "smooth", block: "center" });
+    const first = packsBox.querySelector("button");
+    if (first) first.focus({ preventScroll: true });
+  }
+
+  async function startCheckout(pack, btn) {
+    const email = buyEmail.value.trim();
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+      setBuyStatus("Enter a valid email first — it is how we recover your edits if this browser loses its data.", true);
+      buyEmail.focus();
+      return;
+    }
+    btn.disabled = true;
+    setBuyStatus("Opening secure checkout…");
+    try {
+      const r = await fetch(api("/api/checkout"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pack: pack.id, user: user, email: email }),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok || !data.checkout_url)
+        throw new Error(data.detail || ("checkout failed: " + r.status));
+      location.href = data.checkout_url; // PayMongo Hosted Checkout
+    } catch (e) {
+      setBuyStatus("Could not start checkout: " + e.message, true);
+      btn.disabled = false;
+    }
+  }
+
+  async function loadPacks() {
+    let packs = null;
+    try {
+      const r = await fetch(api("/api/packs"));
+      if (r.ok) packs = (await r.json()).packs;
+    } catch (e) { /* offline: keep the note */ }
+    if (!packs || !packs.length) {
+      packsBox.innerHTML = "<p class='muted'>Edit packs are unavailable right now.</p>";
+      return;
+    }
+    packsBox.innerHTML = "";
+    packs.forEach((p) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "pack";
+      btn.innerHTML = "<b></b><small></small>";
+      btn.querySelector("b").textContent = p.label + " — " + peso(p.price);
+      btn.querySelector("small").textContent = p.credits + " edits";
+      btn.onclick = () => startCheckout(p, btn);
+      packsBox.appendChild(btn);
+    });
+  }
+
+  // success_url carries ?paid=1: poll credits until the webhook lands.
+  async function confirmPayment() {
+    const qp = new URLSearchParams(location.search);
+    if (qp.get("paid") !== "1") return;
+    qp.delete("paid");
+    try {
+      history.replaceState(null, "", location.pathname
+        + (qp.toString() ? "?" + qp : "") + location.hash);
+    } catch (e) { /* file:// */ }
+    let start = null;
+    try {
+      const r = await fetch(api("/api/credits?user=" + encodeURIComponent(user)));
+      if (r.ok) start = (await r.json()).credits_left;
+    } catch (e) { /* baseline unknown */ }
+    setStatus("Confirming your payment…");
+    setBuyStatus("Confirming your payment…");
+    showBuyCard();
+    const deadline = Date.now() + 30000;
+    while (Date.now() < deadline) {
+      await new Promise((res) => setTimeout(res, 3000));
+      try {
+        const r = await fetch(api("/api/credits?user=" + encodeURIComponent(user)));
+        if (!r.ok) continue;
+        const n = (await r.json()).credits_left;
+        setCredits(n);
+        if (start === null || n > start) {
+          setStatus("Credits added ✨");
+          setBuyStatus("Credits added — thanks for supporting free edits. 🙏");
+          return;
+        }
+      } catch (e) { /* next tick */ }
+    }
+    const msg = "Still confirming — it can take a minute; the credits appear automatically.";
+    setStatus(msg);
+    setBuyStatus(msg);
   }
 
   function selectPreset(id, save = true) {
@@ -484,7 +589,8 @@
       const data = await r.json().catch(() => ({}));
       if (r.status === 402) {
         setCredits(0);
-        setStatus(data.detail || "Free runs used up — try again tomorrow.", true);
+        setStatus((data.detail || "Out of edits") + " — pick a pack below to keep going.", true);
+        showBuyCard();
         return;
       }
       if (r.status === 403) {
@@ -543,4 +649,6 @@
   loadPresets();
   refreshCredits();
   loadHistory();
+  loadPacks();
+  confirmPayment();
 })();
