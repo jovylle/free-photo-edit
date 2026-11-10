@@ -35,7 +35,7 @@ LAYERS = {
 }
 LAYER = {name: layer for layer, names in LAYERS.items() for name in names}
 
-API_FILES = {f"{name}.py" for name in LAYER} | {"test_abuse.py", "test_async_queue.py", "test_boot.py", "test_cleanup.py", "test_credits.py", "test_edit_contract.py", "test_engines.py"}
+API_FILES = {f"{name}.py" for name in LAYER} | {"test_abuse.py", "test_async_queue.py", "test_boot.py", "test_cleanup.py", "test_credits.py", "test_edit_contract.py", "test_engines.py", "test_payments.py"}
 
 TOP_LEVEL = {
     ".ai", ".github", ".githooks", ".git", "api", "docs", "scripts", "tests", "web",

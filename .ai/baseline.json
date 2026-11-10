@@ -13,9 +13,10 @@
       "api/test_cleanup.py": 12,
       "api/test_credits.py": 15,
       "api/test_edit_contract.py": 42,
-      "api/test_engines.py": 47
+      "api/test_engines.py": 47,
+      "api/test_payments.py": 77
     },
-    "total": 234
+    "total": 311
   },
   "ruff": {
     "files": {
