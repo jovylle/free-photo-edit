@@ -97,6 +97,9 @@
     try {
       tsWidgetId = window.turnstile.render("#tsWidget", {
         sitekey: sitekey, action: TS_ACTION, size: "flexible",
+        // Only show a widget when a challenge is actually required; a green
+        // "Success!" box above the CTA reads as an ad to first-time users.
+        appearance: "interaction-only",
         theme: document.documentElement.dataset.theme === "dark" ? "dark" : "light",
       });
     } catch (e) { tsWidgetId = null; }
@@ -531,6 +534,39 @@
         }
       };
       row.appendChild(dl);
+      // Share the actual PNG, never resultUrl(): that URL is a bearer link to
+      // this browser's job. Files keep the recipient off the API entirely.
+      let shareBlob = null;
+      fetch(resultUrl(j.image_url))
+        .then((r) => (r.ok ? r.blob() : null))
+        .then((b) => { shareBlob = b; })
+        .catch(() => {});
+      const sh = document.createElement("button");
+      sh.type = "button";
+      sh.className = "dl";
+      sh.textContent = "📤 Share";
+      sh.onclick = async () => {
+        const text = "Edited with Free Photo Edit — libre, 3 free edits, walang account. " + location.origin + "/";
+        try {
+          if (shareBlob) {
+            const file = new File([shareBlob], "free-photo-edit.png", { type: "image/png" });
+            if (navigator.canShare && navigator.canShare({ files: [file] })) {
+              await navigator.share({ files: [file], text });
+              return;
+            }
+          }
+          if (navigator.share) {
+            await navigator.share({ text, url: location.origin + "/" });
+            return;
+          }
+          await navigator.clipboard.writeText(text);
+          dl.click(); // no share sheet: save the photo, caption is on the clipboard
+          setStatus("Photo saved and message copied — paste it in Messenger or Facebook.");
+        } catch (e) {
+          if (e.name !== "AbortError") setStatus("Share failed: " + e.message, true);
+        }
+      };
+      row.appendChild(sh);
       card.appendChild(row);
     } else if (j.status === "failed") {
       const p = document.createElement("p");
