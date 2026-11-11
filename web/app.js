@@ -408,6 +408,7 @@
   function stageResult(j) { // newest result takes the stage under the button
     if (!j || j.status !== "done" || !j.image_url) return;
     resultBox.innerHTML = "";
+    prefetchShare(j);
     resultBox.appendChild(cardFor(j));
     resultBox.classList.remove("hidden");
   }
@@ -443,6 +444,16 @@
     if (!/^\/api\/result\/[a-zA-Z0-9_-]+\/(file|input\/\d+)$/.test(path))
       throw new Error("Invalid result URL");
     return api(path) + uq;
+  }
+
+  // Share blobs are cached per job and only prefetched for the card on the
+  // stage; history cards must not pull 30 full PNGs on first paint.
+  const shareBlobs = new Map();
+  function prefetchShare(j) {
+    if (!j.image_url || shareBlobs.has(j.job_id)) return;
+    shareBlobs.set(j.job_id, fetch(resultUrl(j.image_url))
+      .then((r) => (r.ok ? r.blob() : null))
+      .catch(() => null));
   }
 
   function cardFor(j) {
@@ -536,11 +547,6 @@
       row.appendChild(dl);
       // Share the actual PNG, never resultUrl(): that URL is a bearer link to
       // this browser's job. Files keep the recipient off the API entirely.
-      let shareBlob = null;
-      fetch(resultUrl(j.image_url))
-        .then((r) => (r.ok ? r.blob() : null))
-        .then((b) => { shareBlob = b; })
-        .catch(() => {});
       const sh = document.createElement("button");
       sh.type = "button";
       sh.className = "dl";
@@ -548,8 +554,13 @@
       sh.onclick = async () => {
         const text = "Edited with Free Photo Edit — libre, 3 free edits, walang account. " + location.origin + "/";
         try {
-          if (shareBlob) {
-            const file = new File([shareBlob], "free-photo-edit.png", { type: "image/png" });
+          let blob = null;
+          try {
+            blob = await (shareBlobs.get(j.job_id)
+              || fetch(resultUrl(j.image_url)).then((r) => (r.ok ? r.blob() : null)));
+          } catch (e) { /* fall through to text share */ }
+          if (blob) {
+            const file = new File([blob], "free-photo-edit.png", { type: "image/png" });
             if (navigator.canShare && navigator.canShare({ files: [file] })) {
               await navigator.share({ files: [file], text });
               return;
@@ -559,11 +570,14 @@
             await navigator.share({ text, url: location.origin + "/" });
             return;
           }
-          await navigator.clipboard.writeText(text);
-          dl.click(); // no share sheet: save the photo, caption is on the clipboard
-          setStatus("Photo saved and message copied — paste it in Messenger or Facebook.");
+          throw new Error("no share sheet");
         } catch (e) {
-          if (e.name !== "AbortError") setStatus("Share failed: " + e.message, true);
+          if (e.name === "AbortError") return; // user closed the sheet
+          // No usable share path (desktop, in-app webview, lost activation):
+          // save the file and leave the caption on the clipboard.
+          dl.click();
+          try { await navigator.clipboard.writeText(text); } catch (_) { /* insecure origin */ }
+          setStatus("Download started — if no file appears, long-press the photo to save it.");
         }
       };
       row.appendChild(sh);
@@ -632,7 +646,7 @@
         return;
       }
       if (r.status === 403) {
-        setStatus(data.detail || "Bot check failed — tick the box and retry.", true);
+        setStatus(data.detail || "Bot check didn't finish — tap Edit photo again.", true);
         return;
       }
       if (r.status === 503) {
