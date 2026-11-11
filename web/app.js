@@ -74,7 +74,7 @@
   }
 
   function setCredits(n) {
-    creditsBadge.textContent = "credits left: " + (n == null ? "…" : n);
+    creditsBadge.textContent = n == null ? "free edits: …" : n + (n === 1 ? " free edit left" : " free edits left");
   }
 
   async function initTurnstile() {
@@ -96,7 +96,8 @@
     if (!window.turnstile) return;
     try {
       tsWidgetId = window.turnstile.render("#tsWidget", {
-        sitekey: sitekey, action: TS_ACTION, theme: "dark",
+        sitekey: sitekey, action: TS_ACTION, size: "flexible",
+        theme: document.documentElement.dataset.theme === "dark" ? "dark" : "light",
       });
     } catch (e) { tsWidgetId = null; }
   }
@@ -121,7 +122,7 @@
       if (!r.ok) throw new Error("credits " + r.status);
       setCredits((await r.json()).credits_left);
     } catch (e) {
-      creditsBadge.textContent = "credits left: ?";
+      creditsBadge.textContent = "free edits: ?";
       creditsBadge.title = "Could not reach backend: " + e.message;
     }
   }
