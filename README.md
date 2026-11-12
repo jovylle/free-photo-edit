@@ -1,196 +1,187 @@
 # Free Photo Edit
 
-Upload up to 5 photos with a Tagalog, English or Bisaya instruction; poll for an
-AI-edited image, compare before/after, and download. FastAPI serves both the
-static `web/` UI and same-origin `/api/*` routes. `photo-fusion/` is separate.
+A self-hosted web app that edits photos from a typed instruction: upload one to five images, describe the change in Tagalog, English or Bisaya, and get an AI-edited image back with a before/after slider and a download button. One FastAPI process serves both the JSON API and the static UI, so there is no build step, no account system and no database server — state is a single SQLite file.
 
-**Free to users does not mean free inference.** The current default is paid
-OpenAI `gpt-image-2.5-sunburst` (1024×1024, medium). The earlier free-only
-Workers AI plan was superseded by the paid-primary decision in FPE-2, with
-`MAX_DAILY_EDITS=60` per rolling 24 hours. Historical probes estimated roughly
-2.6¢/edit; that is not a current pricing guarantee or a dollar-denominated cap.
-Workers AI remains selectable but its edit path was reported broken.
+## Run it
 
-## Run locally (:8078)
-
-From the project directory, using the existing virtual environment:
+Python 3.12 is what CI and the Dockerfile use. Node is only for the repo checks.
 
 ```bash
-cd /Volumes/DevSSD/fore/lab/free-photo-edit
-# First setup only: copy .env.example to .env if .env does not already exist.
-# Fill secrets in .env, never in commands or browser code.
+git clone https://github.com/jovylle/free-photo-edit.git
+cd free-photo-edit
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+
+cp .env.example .env
+# In .env: set OPENAI_API_KEY for real edits, or set
+# FREE_PHOTO_EDIT_ENGINE=fake for a zero-cost local run.
+
 .venv/bin/python -m uvicorn api.server:app --host 127.0.0.1 --port 8078
 ```
 
-Open `http://127.0.0.1:8078`. The runtime module is **`api.server:app`**;
-`free_photo_edit_api` is a pytest-only alias created by `api/conftest.py`, not
-an importable uvicorn package. The boot test exercises this entrypoint on an
-unused port. Explicit `--port 8078` sets the port; `PORT` in `.env` alone does
-not configure uvicorn.
+Open <http://127.0.0.1:8078>. The runtime module is `api.server:app`; `free_photo_edit_api` is a pytest-only alias from `api/conftest.py`, not an importable uvicorn package. Pass `--port` explicitly — `PORT` in `.env` is not read by uvicorn.
 
-For trusted LAN testing only, `--host 0.0.0.0` permits other devices to open
-`http://<host-lan-ip>:8078`; do not port-forward it. Leave Turnstile secrets
-blank only in isolated local development. Configured secrets enforce the bot
-check and hostname/action validation.
+The `fake` engine echoes your first uploaded PNG (a 1×1 PNG for non-PNG input), so upload, the 202 job, polling, compare, download and retention all work with no key and no spend. Real edits need the default `openai` engine and a key. For trusted-LAN testing only, `--host 0.0.0.0` serves `http://<host-lan-ip>:8078`; never port-forward it. Leave Turnstile secrets blank only in isolated local dev.
 
-## Endpoints
+## What it does
+
+- 1–5 JPEG/PNG/WebP photos per job, 5 MiB each, plus a 2000-character prompt.
+- Four presets — `background`, `clothes`, `restore`, `custom`. The preset supplies the prompt template and your text is quoted verbatim; `restore` works without text, `background` and `custom` require it.
+- Async jobs: the upload returns a job ID immediately, the page polls every ~10 s.
+- 3 free edits per browser token, the newest 30 jobs as history restored after reload, before/after compare and PNG download.
+- Optional Cloudflare Turnstile gate and optional paid edit packs via Xendit (test keys first; live keys are a separate decision).
+- Plain HTML/CSS/JS pages (`index`, `about`, `faq`, `privacy`, `terms`), light/dark theme, GCash QR and Ko-fi links.
+
+## How it works
+
+```text
+browser (web/)
+  │  POST /api/edit  multipart: image[] + prompt + preset + user
+  ▼
+api/server.py → Turnstile → rolling rate gates → 3-per-IP / 6-global slots
+  │             → atomic check-and-debit + job insert in SQLite
+  ▼  202 {job_id, status: "running", credits_left}
+daemon thread → api/engines.py → provider → api/storage/<job>/output.png
+  ▲
+  └── browser polls GET /api/result/<job_id> → done | failed
+```
+
+A failed engine or setup call refunds the credit and marks the job `failed`; the poll then returns HTTP 200 with `status: "failed"` and a null `image_url`.
+
+| Path | Role |
+|---|---|
+| `api/server.py` | FastAPI app, all routes, rate gates, job slots, worker thread |
+| `api/prompts.py` | Preset templates, identity invariants, prompt assembly |
+| `api/credits.py` | SQLite ledger: users, jobs, payments; atomic debit and refund |
+| `api/engines.py` | Provider adapters behind `Engine.edit() -> png bytes` |
+| `api/cleanup.py` | Seven-day artifact expiry and deletion sweep |
+| `api/probe_live.py` | Manual one-call provider probe, never part of the app |
+| `web/` | Static UI; talks only to `/api/*` on its configured origin |
+
+Imports go strictly downward: `server` → `cleanup`/`engines` → `credits`/`prompts`. A new `api/` module is an architecture change; see `docs/ARCHITECTURE.md`.
+
+## HTTP API
 
 | Method | Path | Contract |
 |---|---|---|
-| `POST` | `/api/edit` | Multipart `image` (1–5 uploads), `prompt`, `preset`, `user`, and `cf-turnstile-response` when Turnstile is enabled. Returns **202** `{job_id, status: "running", credits_left, note}`; poll every ~10s. |
-| `GET` | `/api/result/{job_id}` | `{job_id, status, preset, created_at, image_url, credits_left, artifacts_expired}`. Status remains `running`, `done` or `failed`; `image_url` is null until done or after expiry. Unknown job: 404. |
-| `GET` | `/api/result/{job_id}/file` | Output PNG download; 410 after terminal-job expiry, otherwise 404 until done or if absent. |
-| `GET` | `/api/result/{job_id}/input/{index}` | Original uploaded bytes (not a resized thumbnail), with JPEG/PNG/WebP MIME; 410 after terminal-job expiry, otherwise 404 if absent. |
-| `GET` | `/api/jobs?user=` | Up to 30 newest jobs for history/resume. |
+| `POST` | `/api/edit` | Multipart: `image` (1–5), `prompt`, `preset`, `user`, and `cf-turnstile-response` when Turnstile is on. Returns **202** `{job_id, status: "running", credits_left, note}`. |
+| `GET` | `/api/result/{job_id}` | `{job_id, status, preset, created_at, image_url, credits_left, artifacts_expired}`. `status` is `running`, `done` or `failed`; `image_url` is null until done or after expiry. Unknown job: 404. |
+| `GET` | `/api/result/{job_id}/file` | Output PNG. 410 after terminal-job expiry, otherwise 404 until done or if absent. |
+| `GET` | `/api/result/{job_id}/input/{index}` | Original uploaded bytes (not a thumbnail), with JPEG/PNG/WebP MIME. 410 after expiry, otherwise 404. |
+| `GET` | `/api/jobs?user=` | Up to 30 newest jobs for history and resume. |
 | `GET` | `/api/credits?user=` | `{user, credits_left}`. Read routes accept `X-User` or `?user=`; POST uses the multipart `user`. |
-| `GET` | `/api/presets` | `background`, `clothes`, `restore`, `custom`. |
+| `GET` | `/api/presets` | The four presets with labels and hints. |
 | `GET` | `/api/config` | `{turnstile_sitekey}` (null when unset); never exposes the secret. |
-| `GET` | `/api/packs` | Server-side edit packs: `{packs: [{id, label, price, credits}]}`, price in centavos. |
-| `POST` | `/api/checkout` | JSON `{pack, user, email}` → `{checkout_url, session_id}` (Xendit hosted checkout). 400 unknown pack or bad email, 429 over 5/hour/IP, 503 when Xendit keys are unset. |
-| `POST` | `/api/xendit/webhook` | `x-callback-token` header; grants pack edits once per paid session. 401 bad token, 400 low amount, 200 for duplicates and unknown sessions. |
+| `GET` | `/api/packs` | `{packs: [{id, label, price, credits}]}`, price in centavos; empty when payments are unconfigured. |
+| `POST` | `/api/checkout` | JSON `{pack, user, email}` → `{checkout_url, session_id}`. 400 bad pack/email, 429 over 5/hour/IP, 503 when Xendit keys or return URLs are unset. |
+| `POST` | `/api/xendit/webhook` | `x-callback-token` header; credits a pack once per paid session. 401 bad token, 400 low amount, 200 for duplicates and unknown sessions. |
 
-Validation: 1–5 nonempty JPEG/PNG/WebP uploads, each up to 5 MiB, prompt up to 2000
-characters, known preset. Restore can supply its default instruction; custom
-requires text. MIME is declared by the upload, not verified by an image decoder.
+Packs are priced server-side: Starter ₱49 / 10 edits, Plus ₱99 / 25, Pro ₱199 / 60. The browser never sends a price.
 
-Errors: **400** validation, **402** no user credits, **403** bot check,
-**429** rate/concurrency gates (with `Retry-After`), **503** global daily cap
-(with `Retry-After`), **502** post-debit setup failure (refunded). After a 202,
-engine failure is an HTTP-200 poll with `status: "failed"`, null image URL and
-refunded credit, not a later HTTP 502.
+Errors: **400** validation, **402** no credits, **403** bot check, **429** rate or concurrency gate, **503** global daily cap or unconfigured payments, **502** post-debit setup failure (refunded). 429/503 carry `Retry-After`.
 
-User tokens and job IDs are not authentication. Anyone with a job ID can fetch
-its files; do not treat this as private storage for sensitive photos.
+## Limits and quotas
 
-## Keys and engines
+| Limit | Value | Scope |
+|---|---|---|
+| Free edits | 3 | Per user token, initial grant — not a daily refill |
+| Concurrent jobs | 3 per IP, 6 global | Per process, shared across user tokens |
+| Submissions | 3 / minute | Per IP |
+| Submissions | 24 / day | Per IP |
+| Submissions | 12 / day | Per IP + User-Agent hash ("device") |
+| Submissions | 60 / day | Global, all recorded jobs including failed ones |
+| Uploads | 1–5 photos, 5 MiB each | Per job |
+| Prompt | 2000 characters | Per job |
+| Checkout attempts | 5 / hour | Per IP |
+| History | 30 newest jobs | Per user token |
 
-**Image-model keys live server-side only.** `web/` fetches only same-origin
-`/api/*`; it never calls model providers directly. The optional external
-Turnstile widget uses a public sitekey, not an image-model secret.
+All windows are rolling; there is no midnight reset. One accepted edit debits one credit; engine or setup failure refunds it. Debit, job insert and the global check share one `BEGIN IMMEDIATE` transaction, so a zero balance returns 402 without an engine call.
 
-Keep secrets in the gitignored `.env`; never log keys, put them in `web/`, or
-commit `.env`, `api/credits.db` or storage. See `.env.example` for settings:
+A paid balance skips the global cap and the per-IP/per-device daily gates, because a purchased balance is already finite; the per-minute IP limit, Turnstile and upload validation still apply. The "user" is a self-typed string in SQLite and browser storage — a quota bucket, not identity. IP limits are a generosity gate, not security: `CF-Connecting-IP`/`X-Forwarded-For` are trusted as sent, so run behind a proxy you control.
 
-- `FREE_PHOTO_EDIT_ENGINE=openai` (default): `OPENAI_API_KEY`; multipart
-  images/edits, `gpt-image-2.5-sunburst`, 1024×1024, medium. No `input_fidelity`.
-- `FREE_PHOTO_EDIT_ENGINE=workers-ai`: `CF_ACCOUNT_ID` and
-  `CLOUDFLARE_API_TOKEN` with Workers AI permissions. Default model
-  `@cf/black-forest-labs/flux-2-dev` (override `WORKERS_AI_MODEL`), multipart
-  `image`, `prompt`, `width=512`, `height=512`, `steps=25`.
-  This is an explicit alternative, **not automatic failover**.
-- `FREE_PHOTO_EDIT_ENGINE=pollinations`: unconfigured stub; engine raises
-  `501 not-configured`, which the async route handles as failed/refunded.
+## Configuration
 
-Historical spike: schnell was text-to-image only; the planned SD img2img
-fallback reportedly 404ed; SDXL/inpainting rejected image inputs; flux-2-dev
-reportedly returned 500 on image input. These are historical findings, not a
-fresh successful Workers AI round-trip. A successful free-quota edit and
-neuron usage have **not** been verified by FPE-5.
+Environment variables, loaded from the gitignored `.env` at the repo root. Never put keys in `web/`, in commands, or in git.
 
-`api/probe_live.py` makes one real provider call using the selected engine
-(default **paid OpenAI**). It bypasses routes, credit accounting and the global
-cap; it is **not** a route E2E test. Do not run it expecting a free probe.
+| Variable | Default | Meaning |
+|---|---|---|
+| `FREE_PHOTO_EDIT_ENGINE` | `openai` | `openai`, `workers-ai`, `pollinations`, `fake` |
+| `OPENAI_API_KEY` | empty | Required by the default engine |
+| `CF_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN` | empty | Workers AI credentials |
+| `WORKERS_AI_MODEL` | `@cf/black-forest-labs/flux-2-dev` | Workers AI override |
+| `FREE_CREDITS` | `3` | Initial credits per new user token |
+| `FREE_PHOTO_EDIT_DB` | `./api/credits.db` | SQLite ledger path |
+| `FREE_PHOTO_EDIT_STORAGE` | `./api/storage` | Artifact root |
+| `IP_MINUTE_LIMIT` | `3` | Submissions per rolling minute per IP |
+| `IP_DAILY_LIMIT` | `24` | Submissions per rolling 24 h per IP |
+| `DEVICE_DAILY_LIMIT` | `12` | Submissions per rolling 24 h per IP+UA |
+| `MAX_DAILY_EDITS` | `60` | Global submissions per rolling 24 h |
+| `TURNSTILE_SITEKEY`, `TURNSTILE_SECRET` | empty | Public widget key / verifier secret; blank secret disables the check |
+| `TURNSTILE_HOSTNAMES` | empty | Comma-separated hostnames accepted by siteverify |
+| `XENDIT_SECRET_KEY`, `XENDIT_WEBHOOK_TOKEN` | empty | Payment sessions key / static callback token |
+| `PAYMENT_SUCCESS_URL`, `PAYMENT_CANCEL_URL` | empty | HTTPS return URLs on the frontend origin |
+| `CHECKOUT_PER_HOUR` | `5` | Checkout attempts per IP per hour |
+| `CORS_ORIGINS` | empty | Extra origins allowed to call `/api/*` |
+| `PORT` | `8078` | Documentation only; uvicorn's `--port` decides |
 
-Live route E2E (FPE-5, 2026-11-04): exactly one paid-primary `POST /api/edit`
-(custom preset, 512×512 JPEG in) → **202** → poll `done`, 1024×1024 PNG out
-(~963 KB), credits **3→2** for user `fpe5-live1` (job `24bb39c247c8`). Single
-inference call, no retry. The route captures no provider usage or dollar cost —
-actual spend is visible only in the OpenAI dashboard; the historical ~2.6¢/edit
-estimate is not a cap, and token billing has no enforceable pre-request ceiling.
+Relative overrides resolve from the server working directory. Keep the ledger and storage outside any directory a redeploy replaces. `DEVICE_DAILY_LIMIT` and `CORS_ORIGINS` exist in code but not in `.env.example`.
 
-## Quota and concurrency
+## Engines
 
-- `FREE_CREDITS=3`: initial credits per user token, **not a daily refill**.
-  One accepted edit debits one; engine/setup failure refunds it.
-- Debit, job insert and authoritative global-window check share one SQLite
-  `BEGIN IMMEDIATE` transaction. Zero balance gives 402 without an engine call.
-- `IP_MINUTE_LIMIT=3`: rolling minute per IP → 429.
-- `IP_DAILY_LIMIT=24`: rolling 24 hours per IP + User-Agent hash → 429.
-  User-Agent is spoofable; this is a generosity gate, not identity verification.
-- `MAX_DAILY_EDITS=60`: rolling 24 hours across all recorded jobs, including
-  failed jobs → 503. This limits accepted job count, not actual dollar charges.
-- Three concurrent jobs **per IP**, shared across user tokens, six global.
-  Semaphores are in-process; run one uvicorn worker for these limits.
-- Process death can strand running jobs; restart recovery is not implemented.
+- `openai` (default): `images/edits`, model `gpt-image-2.5-sunburst`, 1024×1024, quality `medium`, 1–5 images. `input_fidelity` is deliberately never sent; the key stays server-side. Historical probes estimated roughly 2.6¢/edit — not a current price guarantee and not a dollar cap. Routes record no provider usage or cost, so real spend is visible only in the OpenAI dashboard.
+- `workers-ai`: Cloudflare Workers AI REST, 512×512, 25 steps, one image only. Its live image-input path was reported broken in October 2026 probes and has not been re-verified working. Explicit alternative, never automatic failover.
+- `pollinations`: a stub that raises `501 not-configured`, surfaced as a failed, refunded job. `fake`: dev-only; echoes a PNG so end-to-end runs cost nothing — the Dockerfile and `deploy.yml` select it.
 
-## Storage / automatic TTL cleanup
+`api/probe_live.py` makes one real call with the selected engine — by default a paid OpenAI call — and bypasses routes, credit accounting and the daily cap. It is a probe, not a route test.
 
-Defaults: ledger `api/credits.db`, files `api/storage/<job_id>/input_0.*` and
-`output.png`. Override with `FREE_PHOTO_EDIT_DB` / `FREE_PHOTO_EDIT_STORAGE`.
-Relative override paths resolve from the server working directory.
+## Storage and retention
 
-Artifacts expire **seven days after the job first becomes `done` or `failed`**,
-at `terminal_at + 604800` (inclusive). Directory/file mtime and submission time
-do not determine expiry. Existing terminal rows with unknown completion times
-get `terminal_at` set once at migration, granting seven days of grace; existing
-running rows stay running with no terminal timestamp.
+Artifacts live at `api/storage/<job_id>/input_<n>.<ext>` and `output.png`; the ledger is `api/credits.db` with `users`, `jobs` and `payments` tables.
 
-`api/cleanup.py` removes only regular `input_0.jpg`, `input_0.jpeg`,
-`input_0.png`, `input_0.webp` and `output.png` files of expired ledger-backed
-terminal jobs. Empty job directories are then removed. Running/unknown-status
-jobs, orphan directories, unknown content, nested directories and symlinks are
-left alone. Descriptor-relative no-follow directory access prevents deletion
-through job/root symlinks. Failed file deletions are logged and retried; repeat
-sweeps are safe. The configured storage parent path must be operator-controlled.
-No job rows, credit balances, refunds, prompts, or quota history are pruned.
+Artifacts expire **seven days after a job first becomes `done` or `failed`** (`terminal_at + 604800`, inclusive); submission time and file mtime do not matter. A sweep runs at startup and hourly in one background thread and removes only the known artifact filenames of expired, ledger-backed terminal jobs, then the empty job directory. Running jobs, orphan directories, unknown files, nested directories and symlinks are left alone, using descriptor-relative no-follow access.
 
-FastAPI's lifespan in `api/server.py` runs a sweep at startup, then every hour
-in one background thread, stopped/joined on shutdown. No cron or new dependency
-is needed. Physical cleanup requires the server to run and storage permissions
-to permit deletion: expiry is not an exact-time erasure guarantee. Stranded
-running jobs are deliberately never swept (restart recovery remains separate).
+Expiry is enforced by time even before deletion succeeds: the poll and history stay HTTP 200 with the original status, `artifacts_expired: true`, a null `image_url` and empty `inputs`, while both artifact routes return **410 Gone**. Expired history is labelled and its compare/download controls are hidden.
 
-Expiry is enforced by time even before physical cleanup succeeds: poll/history
-remain HTTP 200 with the original terminal status, `artifacts_expired: true`,
-null `image_url`, and empty history `inputs`. Both artifact routes return **410
-Gone**, not a missing-file error. The UI labels expired history and hides
-comparison/download controls. Unexpected missing output *before* expiry still
-returns the existing poll 500; it is not silently classified as TTL expiry.
+The sweep deletes files, not records: job rows, balances, refunds, prompts and quota history are never pruned, so prompts and user tokens stay in SQLite indefinitely. Uploads are stored and forwarded byte-for-byte, so EXIF metadata — including GPS — is not stripped. Physical cleanup needs a running server and writable storage, so expiry is not an exact-time erasure guarantee.
 
-This implementation is verified only with temporary storage/SQLite. No live
-photos were deleted and no service was deployed/restarted. Production rollout
-and deletion still require explicit approval; starting this updated server
-against a real ledger/storage enables automatic cleanup after any legacy grace.
+## Deploying
 
-## Verification
+Both shapes serve the same `web/` directory; only the origin differs.
+
+**Same origin, one Mac.** Uvicorn on `127.0.0.1:8078` behind a Cloudflare tunnel at `freephoto.uft1.com`, kept alive by launchd. The established setup uses launchd `com.fore.free-photo-edit`, a staged copy at `~/fore/services/free-photo-edit/app` (launchd cannot read the external lab volume), a staged `.env`, `sync-live.sh` to rsync and restart, and logs at `~/Library/Logs/fore/free-photo-edit.{log,err}`. `sync-live.sh` never copies `.env`, `credits.db` or `storage/`. Treat these notes as the shape of the setup, not a fresh health check.
+
+**Split: static frontend, separate API origin.** Publish `web/` as-is on Cloudflare Pages, set the `content` of the `api-base` meta tag in each page to the API origin (empty means same origin), and allow that origin on the API with `CORS_ORIGINS=https://your-frontend.example`. `app.js` prefixes API calls and result URLs with that base, so no host is baked into the code. Without a matching `CORS_ORIGINS` entry the response has no `Access-Control-Allow-Origin` and the browser blocks it. Payment return URLs must be HTTPS on the frontend origin.
+
+**Container.** The `Dockerfile` serves API plus UI on port 8080 with `FREE_PHOTO_EDIT_ENGINE=fake` and data under `/app/data`; override both for anything real and mount `/app/data` as a volume so a redeploy cannot wipe the ledger. `deploy.yml` describes the private dev stack (`free-photo-edit-dev`, `8090:8080`, health check `/api/config`); production rollout goes through the established homeploy workflow, not that file.
+
+## Security notes
+
+- Job IDs are bearer tokens. With no sessions or passwords, anyone holding a job ID can fetch that job's output and original inputs — do not treat the service as private storage for sensitive photos.
+- User tokens are self-typed strings, not authentication; clearing browser storage gets a new quota bucket. Upload MIME comes from the declared `Content-Type` with no image decoder check, and size is capped at 5 MiB.
+- With `TURNSTILE_SECRET` set, verification fails closed: missing token, wrong action (`edit`) or a hostname outside `TURNSTILE_HOSTNAMES` is a 403. An empty allowlist rejects everything; the Turnstile dashboard domain list is separate and must cover every hostname you test from.
+- Keep `.env`, `api/credits.db` and `api/storage/` out of git, point storage at a path the operator controls, and never log keys.
+
+## Development
 
 ```bash
-scripts/check.sh          # everything CI enforces, one command
+python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
+scripts/check.sh
 ```
 
-Setup once: `python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt`.
-Rules for agents and humans: `AGENTS.md`, architecture: `docs/ARCHITECTURE.md`,
-workflow: `docs/AI_WORKFLOW.md`.
+`scripts/check.sh` is exactly what CI runs (`.github/workflows/ci.yml`, job `check`): mypy/ruff ratchet against `.ai/baseline.json`, architecture/layout check, anti-weakening guard, `pytest api`, `node --check web/app.js`, and `node tests/expired-card.cjs`. Green locally is the definition of done.
 
-TTL follow-up local run: **85 passed**, one existing Starlette/httpx
-deprecation warning; expired-card DOM tests pass for done/failed jobs. TTL tests
-cover boundary/repeated sweeps, migration grace, retry after deletion failure,
-running/recent/unknown/symlink preservation, ledger/credit/quota preservation,
-expired APIs before/after sweep, and startup/hourly-worker shutdown lifecycle.
-Mocked route tests exercise 202 → poll → download with
-credits 3 → 2, 402 with zero engine calls, failure/refund, 3/IP + 6-global
-slots, validation and atomic daily-cap rejection. Engine tests use mocked
-HTTP; they do not establish provider availability or image quality.
+- Branch from `origin/dev` and target PRs at `dev`; GitHub's default base is `master`, the production pointer, deliberately behind. `.ai/baseline.json`, `pyproject.toml`, `.github/workflows/` and `CODEOWNERS` are protected and need the `config-change` label.
+- Do not edit, skip or soften tests or checks to get green. `tests/frontend-smoke.js` is an interactive Playwright MCP script, not a Node CLI test; `docs/AI_WORKFLOW.md` has the loop and gates.
 
-`tests/frontend-smoke.js` is a Playwright MCP function (not a Node CLI test).
-FPE-4 verified mocked mobile workflows; see `docs/memories.md` for invocation.
-The UI includes an accessible before/after range control, download, history,
-reload persistence, light/dark theme, GCash/Ko-fi and a labeled ad placeholder.
+## Status and known gaps
 
-**Live E2E pending:** this card permits one free Workers AI call, while FPE-2
-accepted a paid-primary design with a documented broken free alternative.
-No inference call was made in FPE-5 pending reconciliation of that requirement;
-no neurons, paid cost or live credit decrement are claimed.
+- **No startup recovery.** Process death strands `running` jobs: they stay running forever, the credit is not refunded, and the sweep never touches them.
+- **Single worker only.** Job slots and checkout throttles are in-process semaphores and dictionaries; multiple uvicorn workers multiply the 3-per-IP and 6-global limits instead of sharing them, and SQLite is not built for concurrent writers across processes.
+- **Turnstile hostname allowlist.** Verification needs a non-empty `TURNSTILE_HOSTNAMES` and an exact match, listed both in the env var and the Turnstile dashboard; any mismatch fails closed with 403.
+- **Artifacts are bearer-access by job ID.** No ownership check on `/api/result/{job_id}/file` or `/input/{n}`, so a leaked ID is a leaked photo.
+- **Workers AI is unproven.** The free path was still broken at last check and has no automatic fallback; paid OpenAI is the working default. Retention is best-effort, deletion needs a running server with writable storage, and only known artifact names are removed.
+- Verified, and not more: mocked route tests plus one real paid `POST /api/edit` → poll `done`, 1024×1024 PNG, credits 3 → 2. Nothing here claims output quality, provider uptime, free-tier viability or a dollar cost.
 
-## Deployment boundary
+## Further reading
 
-Tunnel hostname: **`freephoto.uft1.com`** → origin `127.0.0.1:8078`.
-Existing deployment notes identify launchd `com.fore.free-photo-edit`, staged
-copy `~/fore/services/free-photo-edit/app` (launchd cannot read the lab volume),
-staged `.env` secrets, `sync-live.sh`, and logs under
-`~/Library/Logs/fore/free-photo-edit.{log,err}`. These notes are not a fresh
-health check or approval to deploy.
-
-FPE-5 does not sync/restart the live app, modify tunnel configuration, add a
-`PROJECTS.md` row, or change dashboard inventory. The orchestrator owns deploy
-and public verification; deploy via the established homeploy workflow.
+`AGENTS.md` (rules), `docs/ARCHITECTURE.md` (layers and file map), `docs/AI_WORKFLOW.md` (branch, PR, gates), `web/README.md` (frontend contract), `.env.example` (annotated settings).

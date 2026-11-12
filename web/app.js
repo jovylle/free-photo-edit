@@ -74,7 +74,7 @@
   }
 
   function setCredits(n) {
-    creditsBadge.textContent = "credits left: " + (n == null ? "…" : n);
+    creditsBadge.textContent = n == null ? "free edits: …" : n + (n === 1 ? " free edit left" : " free edits left");
   }
 
   async function initTurnstile() {
@@ -96,7 +96,11 @@
     if (!window.turnstile) return;
     try {
       tsWidgetId = window.turnstile.render("#tsWidget", {
-        sitekey: sitekey, action: TS_ACTION, theme: "dark",
+        sitekey: sitekey, action: TS_ACTION, size: "flexible",
+        // Only show a widget when a challenge is actually required; a green
+        // "Success!" box above the CTA reads as an ad to first-time users.
+        appearance: "interaction-only",
+        theme: document.documentElement.dataset.theme === "dark" ? "dark" : "light",
       });
     } catch (e) { tsWidgetId = null; }
   }
@@ -121,7 +125,7 @@
       if (!r.ok) throw new Error("credits " + r.status);
       setCredits((await r.json()).credits_left);
     } catch (e) {
-      creditsBadge.textContent = "credits left: ?";
+      creditsBadge.textContent = "free edits: ?";
       creditsBadge.title = "Could not reach backend: " + e.message;
     }
   }
@@ -404,6 +408,7 @@
   function stageResult(j) { // newest result takes the stage under the button
     if (!j || j.status !== "done" || !j.image_url) return;
     resultBox.innerHTML = "";
+    prefetchShare(j);
     resultBox.appendChild(cardFor(j));
     resultBox.classList.remove("hidden");
   }
@@ -439,6 +444,16 @@
     if (!/^\/api\/result\/[a-zA-Z0-9_-]+\/(file|input\/\d+)$/.test(path))
       throw new Error("Invalid result URL");
     return api(path) + uq;
+  }
+
+  // Share blobs are cached per job and only prefetched for the card on the
+  // stage; history cards must not pull 30 full PNGs on first paint.
+  const shareBlobs = new Map();
+  function prefetchShare(j) {
+    if (!j.image_url || shareBlobs.has(j.job_id)) return;
+    shareBlobs.set(j.job_id, fetch(resultUrl(j.image_url))
+      .then((r) => (r.ok ? r.blob() : null))
+      .catch(() => null));
   }
 
   function cardFor(j) {
@@ -530,6 +545,42 @@
         }
       };
       row.appendChild(dl);
+      // Share the actual PNG, never resultUrl(): that URL is a bearer link to
+      // this browser's job. Files keep the recipient off the API entirely.
+      const sh = document.createElement("button");
+      sh.type = "button";
+      sh.className = "dl";
+      sh.textContent = "📤 Share";
+      sh.onclick = async () => {
+        const text = "Edited with Free Photo Edit — libre, 3 free edits, walang account. " + location.origin + "/";
+        try {
+          let blob = null;
+          try {
+            blob = await (shareBlobs.get(j.job_id)
+              || fetch(resultUrl(j.image_url)).then((r) => (r.ok ? r.blob() : null)));
+          } catch (e) { /* fall through to text share */ }
+          if (blob) {
+            const file = new File([blob], "free-photo-edit.png", { type: "image/png" });
+            if (navigator.canShare && navigator.canShare({ files: [file] })) {
+              await navigator.share({ files: [file], text });
+              return;
+            }
+          }
+          if (navigator.share) {
+            await navigator.share({ text, url: location.origin + "/" });
+            return;
+          }
+          throw new Error("no share sheet");
+        } catch (e) {
+          if (e.name === "AbortError") return; // user closed the sheet
+          // No usable share path (desktop, in-app webview, lost activation):
+          // save the file and leave the caption on the clipboard.
+          dl.click();
+          try { await navigator.clipboard.writeText(text); } catch (_) { /* insecure origin */ }
+          setStatus("Download started — if no file appears, long-press the photo to save it.");
+        }
+      };
+      row.appendChild(sh);
       card.appendChild(row);
     } else if (j.status === "failed") {
       const p = document.createElement("p");
@@ -595,7 +646,7 @@
         return;
       }
       if (r.status === 403) {
-        setStatus(data.detail || "Bot check failed — tick the box and retry.", true);
+        setStatus(data.detail || "Bot check didn't finish — tap Edit photo again.", true);
         return;
       }
       if (r.status === 503) {
