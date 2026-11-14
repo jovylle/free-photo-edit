@@ -1,0 +1,10 @@
+# Private dev stack on elitedesk. Fake provider: no key, no spend.
+name: free-photo-edit-dev
+expose: tunnel
+source: { path: /home/me/.homeploy/projects/free-photo-edit-dev/src }
+# Loopback only: cloudflared reaches it on 127.0.0.1; nothing on the LAN can.
+ports: ["127.0.0.1:8090:8080"]
+hostnames: ["free-photo-edit-dev.uft1.com"]
+# Dev ledger/storage live outside src/ so a redeploy cannot wipe them.
+volumes: ["/home/me/.homeploy/projects/free-photo-edit-dev/data:/app/data"]
+healthcheck: { path: /api/config, timeout: 180 }

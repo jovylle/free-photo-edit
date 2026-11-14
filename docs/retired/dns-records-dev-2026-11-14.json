@@ -1,0 +1,36 @@
+[
+  {
+    "id": "2ac6d04338e8fdff807ab5dad1e78ef4",
+    "name": "free-photo-edit-dev.uft1.com",
+    "type": "CNAME",
+    "content": "9ced8b06-c4fc-401f-b7a2-5aa3aec5ded0.cfargotunnel.com",
+    "proxiable": true,
+    "proxied": true,
+    "ttl": 1,
+    "settings": {
+      "flatten_cname": false
+    },
+    "meta": {},
+    "comment": null,
+    "tags": [],
+    "created_on": "2026-11-08T11:52:38.554746Z",
+    "modified_on": "2026-11-08T11:52:38.554746Z"
+  },
+  {
+    "id": "1bfffb8f8efeb5350b42003d8d93da82",
+    "name": "free-photo-edit.uft1.com",
+    "type": "CNAME",
+    "content": "9ced8b06-c4fc-401f-b7a2-5aa3aec5ded0.cfargotunnel.com",
+    "proxiable": true,
+    "proxied": true,
+    "ttl": 1,
+    "settings": {
+      "flatten_cname": false
+    },
+    "meta": {},
+    "comment": null,
+    "tags": [],
+    "created_on": "2026-11-11T01:38:15.320481Z",
+    "modified_on": "2026-11-11T01:38:15.320481Z"
+  }
+]
