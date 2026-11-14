@@ -5,7 +5,9 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
+from typing import Any
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
@@ -44,18 +46,18 @@ def client(tmp_path, monkeypatch):
     return TestClient(server.app)
 
 
-def _file(payload=PNG, ctype="image/png"):
+def _file(payload: bytes = PNG, ctype: str = "image/png") -> dict[str, tuple[str, bytes, str]]:
     return {"image": ("in.png", payload, ctype)}
 
 
-def _edit(client, user, **kw):
+def _edit(client: TestClient, user: str, **kw: Any) -> httpx.Response:
     data = {"prompt": "make the sky sunset", "preset": "custom", "user": user}
     data.update(kw.get("data", {}))
     return client.post("/api/edit", headers={"X-User": user}, data=data,
                        files=kw.get("files", _file()))
 
 
-def _wait_done(client, job_id, timeout=10.0):
+def _wait_done(client: TestClient, job_id: str, timeout: float = 10.0) -> dict[str, Any]:
     deadline = time.time() + timeout
     while time.time() < deadline:
         r = client.get(f"/api/result/{job_id}")

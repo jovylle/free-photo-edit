@@ -27,9 +27,15 @@ RUFF_RE = re.compile(r"^(?P<file>[^:]+\.py):\d+:\d+: [A-Z]+\d+")
 
 
 def run(*args: str) -> str:
-    return subprocess.run(
+    # A missing tool (e.g. mypy not installed) must fail loudly: its stderr would
+    # otherwise look like "no findings" and the ratchet would pass on nothing.
+    proc = subprocess.run(
         [sys.executable, *args], cwd=ROOT, capture_output=True, text=True
-    ).stdout
+    )
+    if proc.returncode not in (0, 1) or (not proc.stdout and proc.stderr):
+        print(f"ratchet: {' '.join(args)} failed: {proc.stderr.strip()[:400]}")
+        raise SystemExit(1)
+    return proc.stdout
 
 
 def collect() -> tuple[dict[str, dict[str, int]], dict[str, list[str]]]:
