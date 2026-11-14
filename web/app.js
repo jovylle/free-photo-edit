@@ -620,34 +620,14 @@
     card.appendChild(inRow);
 
     if (j.status === "done" && j.image_url) {
+      // Inputs stay above, result below. A slider overlaid them, which made it
+      // unclear which photo was the edit.
       const after = document.createElement("img");
       after.alt = "edited result";
       after.loading = "lazy";
-      after.style.cssText = "width:100%;height:auto;border-radius:10px;border:0;background:var(--bg)";
+      after.style.cssText = "width:100%;height:auto;border-radius:10px;border:0;background:var(--bg);margin-top:var(--space-2xs)";
       after.src = resultUrl(j.image_url);
-      const compare = document.createElement("div");
-      compare.className = "compare";
-      const before = document.createElement("img");
-      before.className = "compare-before";
-      before.alt = "Original photo";
-      before.src = resultUrl((j.inputs || [])[0] || "/api/result/" + j.job_id + "/input/0");
-      const range = document.createElement("input");
-      range.type = "range";
-      range.min = "0"; range.max = "100"; range.value = "50";
-      range.setAttribute("aria-label", "Compare original and edited photo");
-      const update = () => {
-        before.style.clipPath = "inset(0 " + (100 - range.value) + "% 0 0)";
-        range.setAttribute("aria-valuetext", range.value + "% original photo");
-      };
-      range.addEventListener("input", update);
-      update();
-      const labels = document.createElement("p");
-      labels.className = "compare-labels muted";
-      labels.textContent = "Original ← slide to compare → Edited";
-      before.onerror = () => { before.remove(); range.hidden = true; labels.textContent = "Original unavailable — edited photo shown."; };
-      compare.append(after, before);
-      inRow.remove();
-      card.append(compare, labels, range);
+      card.appendChild(after);
       const row = document.createElement("div");
       row.className = "row";
       const dl = document.createElement("button");

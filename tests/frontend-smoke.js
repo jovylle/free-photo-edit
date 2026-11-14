@@ -72,15 +72,14 @@ async (page) => {
   assert(polls() === count, 'Polling interval shorter than 10 seconds');
   done = true;
   await page.clock.fastForward(1);
-  await page.locator('#result input[type=range]').waitFor();
-  await page.locator('#result input[type=range]').fill('75');
-  assert((await page.locator('#result .compare-before').getAttribute('style')).includes('25%'), 'Slider does not clip original');
+  await page.locator('#result img[alt="edited result"]').waitFor({state:'attached'});
+  assert(await page.locator('#result .job-thumbs img').count() >= 1, 'Input photo missing above the result');
   const download = page.waitForEvent('download');
   await page.locator('#result button').click();
   assert((await download).suggestedFilename() === 'free-photo-edit-smoke123.png', 'Wrong download');
   assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'Mobile overflow');
   await page.reload();
-  await page.locator('#result input[type=range]').waitFor();
+  await page.locator('#result img[alt="edited result"]').waitFor({state:'attached'});
   done = false;
   await page.reload();
   await page.locator('.job-spin').waitFor({state:'attached'});

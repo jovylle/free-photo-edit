@@ -77,6 +77,9 @@ def test_edit_202_and_poll_until_done(client):
     assert r.json()["credits_left"] == 4
     body = _wait_done(client, job_id)
     assert body["image_url"] == f"/api/result/{job_id}/file"
+    # The stage card shows inputs above the result, so the single-job payload
+    # must carry them just like /api/jobs does.
+    assert body["inputs"] == [f"/api/result/{job_id}/input/0"]
     f = client.get(f"/api/result/{job_id}/file?user=ann")
     assert f.status_code == 200
     assert f.content.startswith(b"\x89PNG")

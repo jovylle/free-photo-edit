@@ -462,9 +462,11 @@ def result(job_id: str, user: str = Depends(current_user)):
     job = store.get_job(job_id)
     if job is None:
         raise HTTPException(404, "unknown job")
+    expired = artifacts_expired(job)
     base = {"job_id": job_id, "credits_left": store.balance(user),
             "preset": job["preset"], "created_at": job["created_at"],
-            "artifacts_expired": artifacts_expired(job)}
+            "artifacts_expired": expired,
+            "inputs": [] if expired else _input_urls(job_id)}
     if base["artifacts_expired"]:
         return {**base, "status": job["status"], "image_url": None}
     if job["status"] != "done":
@@ -478,6 +480,13 @@ def result(job_id: str, user: str = Depends(current_user)):
 
 _INPUT_MIME = {".jpg": "image/jpeg", ".jpeg": "image/jpeg",
                ".png": "image/png", ".webp": "image/webp"}
+
+
+def _input_urls(job_id: str) -> list[str]:
+    # Only inputs that actually exist on disk; a job may have fewer than MAX_IMAGES.
+    return [f"/api/result/{job_id}/input/{i}" for i in range(MAX_IMAGES)
+            if any((STORAGE / job_id / f"input_{i}{ext}").exists()
+                   for ext in _INPUT_MIME)]
 
 
 @app.get("/api/result/{job_id}/input/{index}")
@@ -507,9 +516,7 @@ def jobs(user: str = Depends(current_user)):
         expired = artifacts_expired(j)
         image_url = (f"/api/result/{job_id}/file"
                      if j["status"] == "done" and not expired else None)
-        inputs = [] if expired else [f"/api/result/{job_id}/input/{i}" for i in range(MAX_IMAGES)
-                  if any((STORAGE / job_id / f"input_{i}{ext}").exists()
-                         for ext in _INPUT_MIME)]
+        inputs = [] if expired else _input_urls(job_id)
         items.append({**j, "job_id": job_id, "inputs": inputs,
                       "image_url": image_url, "artifacts_expired": expired})
     return {"user": user, "fetched_at": time.time(), "jobs": items}
