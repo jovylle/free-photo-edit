@@ -198,14 +198,32 @@
     } catch (e) { /* no showcase */ }
     if (!Array.isArray(items) || !items.length) return;
     box.innerHTML = "";
-    items.forEach((it) => {
-      const fig = document.createElement("figure");
+    const shot = (src, alt) => {
       const img = document.createElement("img");
       img.loading = "lazy";
       img.decoding = "async";
-      img.src = it.image;
-      img.alt = it.note || (it.preset ? it.preset + " edit" : "Edited photo");
-      fig.appendChild(img);
+      img.src = src;
+      img.alt = alt;
+      return img;
+    };
+    items.forEach((it) => {
+      const fig = document.createElement("figure");
+      const label = it.preset ? it.preset + " edit" : "Edited photo";
+      if (it.before && it.after) { // paired before/after, labelled
+        const pair = document.createElement("div");
+        pair.className = "pair";
+        [["Before", it.before], ["After", it.after]].forEach(([tag, src]) => {
+          const cell = document.createElement("div");
+          const mark = document.createElement("span");
+          mark.className = "tag";
+          mark.textContent = tag;
+          cell.append(shot(src, tag + " — " + label), mark);
+          pair.appendChild(cell);
+        });
+        fig.appendChild(pair);
+      } else {
+        fig.appendChild(shot(it.image, it.note || label));
+      }
       const cap = document.createElement("figcaption");
       cap.textContent = [it.preset, it.note].filter(Boolean).join(" — ");
       fig.appendChild(cap);
