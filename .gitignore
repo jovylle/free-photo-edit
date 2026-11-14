@@ -1,4 +1,6 @@
 .venv/
+.mypy_cache/
+.ruff_cache/
 __pycache__/
 api/storage/
 api/credits.db
@@ -6,3 +8,13 @@ api/credits.db
 *.pyc
 .DS_Store
 .superpowers/
+.wrangler/
+
+# test artifacts
+.playwright-mcp/
+dev-*.png
+e2e-*.png
+user-photo*.png
+
+# generated audit report (regenerate with scripts/audit.sh)
+.ai/metrics.json

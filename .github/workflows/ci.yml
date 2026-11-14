@@ -1,0 +1,29 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [dev, master]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    env:
+      # Isolated fixtures only: never a real ledger, storage path or provider key.
+      # (${{ runner.temp }} is only valid in step scope — scripts/check.sh creates
+      # its own mktemp dirs instead, so no step-level env is needed here.)
+      TURNSTILE_SECRET: ""
+      TURNSTILE_SITEKEY: ""
+      OPENAI_API_KEY: ""
+      # The `config-change` label is a human approving an edit to the checks themselves.
+      ALLOW_PROTECTED: ${{ contains(github.event.pull_request.labels.*.name, 'config-change') && '1' || '' }}
+      BASE_REF: ${{ github.base_ref && format('origin/{0}', github.base_ref) || '' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # scripts/guard.py diffs against the base branch
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements-dev.txt
+      - run: scripts/check.sh

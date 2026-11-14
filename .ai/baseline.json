@@ -1,0 +1,41 @@
+{
+  "mypy": {
+    "files": {
+      "api/cleanup.py": 1,
+      "api/conftest.py": 4,
+      "api/credits.py": 2,
+      "api/engines.py": 7,
+      "api/probe_live.py": 3,
+      "api/server.py": 15,
+      "api/test_abuse.py": 49,
+      "api/test_async_queue.py": 34,
+      "api/test_boot.py": 3,
+      "api/test_cleanup.py": 12,
+      "api/test_credits.py": 15,
+      "api/test_edit_contract.py": 42,
+      "api/test_engines.py": 47,
+      "api/test_payments.py": 77
+    },
+    "total": 311
+  },
+  "ruff": {
+    "files": {
+      "api/cleanup.py": 1,
+      "api/credits.py": 1,
+      "api/server.py": 8,
+      "api/test_abuse.py": 1,
+      "api/test_async_queue.py": 1,
+      "api/test_cleanup.py": 7,
+      "api/test_credits.py": 1,
+      "api/test_edit_contract.py": 1,
+      "api/test_engines.py": 1
+    },
+    "total": 22
+  },
+  "suppressions": {
+    "noqa": 6,
+    "skipped_tests": 0,
+    "type_ignore": 0
+  },
+  "tests": 89
+}

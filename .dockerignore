@@ -1,0 +1,9 @@
+.git
+.venv
+__pycache__
+api/storage
+api/credits.db
+.env
+tests
+docs
+*.md
