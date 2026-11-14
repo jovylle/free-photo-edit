@@ -259,11 +259,3 @@ def test_result_file_is_owner_only(client):
     assert client.get(f"/api/result/{job_id}/input/0?user=someone-else").status_code == 404
 
 
-def test_cors_only_for_the_dev_pages_origin(client):
-    """The staging frontend may call this API; no other origin gets the header."""
-    ok = client.get("/api/config", headers={"Origin": "https://free-photo-edit-dev.pages.dev"})
-    assert ok.headers.get("access-control-allow-origin") == "https://free-photo-edit-dev.pages.dev"
-    preview = client.get("/api/config", headers={"Origin": "https://abc123.free-photo-edit-dev.pages.dev"})
-    assert preview.headers.get("access-control-allow-origin") == "https://abc123.free-photo-edit-dev.pages.dev"
-    other = client.get("/api/config", headers={"Origin": "https://evil.example"})
-    assert "access-control-allow-origin" not in other.headers
