@@ -83,7 +83,7 @@ def test_turnstile_missing_token_403_zero_spend(client, monkeypatch):
     r = _edit(client, "bot1", token=None)
     assert r.status_code == 403, r.text
     assert FakeEngine.calls == 0
-    assert server.get_store().balance("bot1") == 3
+    assert server.get_store().balance("bot1") == 5
 
 
 def test_turnstile_rejected_token_403_zero_spend(client, monkeypatch):
@@ -95,7 +95,7 @@ def test_turnstile_rejected_token_403_zero_spend(client, monkeypatch):
     r = _edit(client, "bot2", token="fake-token")
     assert r.status_code == 403, r.text
     assert FakeEngine.calls == 0
-    assert server.get_store().balance("bot2") == 3
+    assert server.get_store().balance("bot2") == 5
 
 
 def test_turnstile_accepted_token_202(client, monkeypatch):
@@ -166,36 +166,43 @@ def test_ip_minute_limit_429_zero_spend(client, monkeypatch):
     r = _edit(client, "m3", ip="5.5.5.5", ua="ua-3")
     assert r.status_code == 429, r.text
     assert FakeEngine.calls == 3
-    assert server.get_store().balance("m3") == 3
+    assert server.get_store().balance("m3") == 5
 
 
-def test_ip_daily_limit_429(client, monkeypatch):
-    monkeypatch.setattr(server, "IP_DAILY_LIMIT", 2)
-    _seed(server.get_store(), 2, ip="6.6.6.6",
-          ua=_dev("6.6.6.6"))
-    r = _edit(client, "d1", ip="6.6.6.6", ua="test-ua")
-    assert r.status_code == 429, r.text
-    assert FakeEngine.calls == 0
-
-
-def test_ip_daily_limit_per_device(client, monkeypatch):
-    # Same IP, different UA -> separate daily buckets (shared WiFi case).
-    # Minute window stays IP-keyed, so lift it to observe daily per-device.
+def test_ip_daily_limit_ignores_user_agent(client, monkeypatch):
+    # Same IP, different UA -> the per-IP ceiling still applies.
     monkeypatch.setattr(server, "IP_MINUTE_LIMIT", 999)
-    for i in range(24):
-        r = _edit(client, f"f{i}", ip="6.6.6.6", ua=f"friend-{i}")
+    monkeypatch.setattr(server, "IP_DAILY_LIMIT", 2)
+    for i in range(2):
+        r = _edit(client, f"d{i}", ip="6.6.6.6", ua=f"device-{i}")
         assert r.status_code == 202, r.text
-    r = _edit(client, "f-a", ip="6.6.6.6", ua="friend-a")
-    assert r.status_code == 202, r.text
-    # The IP minute window (3/min, still IP-keyed) fires before we can hit
-    # one device's 24/day, so exhaustion is shown per-device directly:
-    seeded = server.get_store()
+    r = _edit(client, "d-a", ip="6.6.6.6", ua="device-a")
+    assert r.status_code == 429, r.text
+    assert "network" in r.json()["detail"]
+
+
+def test_device_daily_limit_429(client, monkeypatch):
+    # Shared WiFi: one device's bucket fills before the per-IP ceiling.
+    monkeypatch.setattr(server, "IP_MINUTE_LIMIT", 999)
+    monkeypatch.setattr(server, "IP_DAILY_LIMIT", 999)
+    monkeypatch.setattr(server, "DEVICE_DAILY_LIMIT", 2)
+    _seed(server.get_store(), 2, ip="7.7.7.7",
+          ua=_dev("7.7.7.7", "friend-x"), prefix="fx")
     calls_before = FakeEngine.calls
-    _seed(seeded, 24, ip="7.7.7.7", ua=_dev("7.7.7.7", "friend-x"),
-          prefix="fx")
     r = _edit(client, "fx1", ip="7.7.7.7", ua="friend-x")
     assert r.status_code == 429, r.text
+    assert "device" in r.json()["detail"]
     assert FakeEngine.calls == calls_before
+
+
+def test_shared_wifi_devices_separate_buckets(client, monkeypatch):
+    monkeypatch.setattr(server, "IP_MINUTE_LIMIT", 999)
+    monkeypatch.setattr(server, "IP_DAILY_LIMIT", 999)
+    monkeypatch.setattr(server, "DEVICE_DAILY_LIMIT", 1)
+    assert _edit(client, "w1", ip="6.6.6.6", ua="friend-a").status_code == 202
+    assert _edit(client, "w2", ip="6.6.6.6", ua="friend-b").status_code == 202
+    r = _edit(client, "w3", ip="6.6.6.6", ua="friend-a")
+    assert r.status_code == 429, r.text
 
 
 def test_global_daily_cap_503(client, monkeypatch):
@@ -204,6 +211,21 @@ def test_global_daily_cap_503(client, monkeypatch):
     r = _edit(client, "g1", ip="8.8.8.8")
     assert r.status_code == 503, r.text
     assert FakeEngine.calls == 0
+
+
+def test_global_daily_cap_is_rechecked_atomically(client, monkeypatch):
+    monkeypatch.setattr(server, "MAX_DAILY_EDITS", 1)
+    store = server.get_store()
+    _seed(store, 1)
+    balance_before = store.balance("racer")
+    # Simulate another process crossing the cap after the route's fast check.
+    monkeypatch.setattr(store, "count_jobs_since", lambda since_ts: 0)
+
+    response = _edit(client, "racer", ip="8.8.8.8")
+
+    assert response.status_code == 503, response.text
+    assert FakeEngine.calls == 0
+    assert store.balance("racer") == balance_before
 
 
 def test_store_windows_exclude_old_jobs(tmp_path):

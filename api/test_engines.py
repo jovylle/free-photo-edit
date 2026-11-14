@@ -10,7 +10,9 @@ import pytest
 
 from free_photo_edit_api import prompts
 from free_photo_edit_api.engines import (
+    _TINY_PNG,
     EngineError,
+    FakeEngine,
     OpenAiEngine,
     PollinationsEngine,
     WorkersAiEngine,
@@ -218,3 +220,12 @@ def test_build_prompt_quotes_verbatim_and_invariants():
 def test_build_prompt_empty_raises():
     with pytest.raises(ValueError):
         prompts.build_edit_prompt("   ")
+
+
+def test_fake_engine_echoes_png_without_provider(monkeypatch):
+    monkeypatch.setenv("FREE_PHOTO_EDIT_ENGINE", "fake")
+    engine = select_engine()
+    assert isinstance(engine, FakeEngine)
+    assert engine.edit(PNG, "x") == PNG
+    assert engine.edit([PNG, PNG], "x") == PNG
+    assert engine.edit(b"jpegbytes", "x") == _TINY_PNG

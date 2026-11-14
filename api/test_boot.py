@@ -58,3 +58,4 @@ def test_documented_uvicorn_command_serves(tmp_path):
             proc.wait(timeout=5)
         except subprocess.TimeoutExpired:
             proc.kill()
+

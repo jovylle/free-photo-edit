@@ -1,14 +1,20 @@
-"""FPE-1 ledger tests: FREE_CREDITS=3, atomic check-then-debit,
+"""FPE-1 ledger tests: FREE_DAILY=3, atomic check-then-debit,
 0-credit raises without touching ledger, concurrent double-submit,
 3-cap, refund on engine failure, IP job count."""
 
 from __future__ import annotations
 
 import threading
+import time
 
 import pytest
 
-from free_photo_edit_api.credits import FREE_CREDITS, CreditsStore, OutOfCredits
+from free_photo_edit_api.credits import (
+    FREE_DAILY,
+    CreditsStore,
+    DailyLimitReached,
+    OutOfCredits,
+)
 
 
 @pytest.fixture()
@@ -17,14 +23,14 @@ def store(tmp_path):
 
 
 def test_new_user_gets_three_credits(store):
-    assert FREE_CREDITS == 3
-    assert store.balance("alice") == 3
+    assert FREE_DAILY == 5
+    assert store.balance("alice") == 5
 
 
 def test_check_and_debit_decrements_and_records_job(store):
     left = store.check_and_debit("bob", "job-1", preset="background", ip="1.1.1.1")
-    assert left == 2
-    assert store.balance("bob") == 2
+    assert left == 4
+    assert store.balance("bob") == 4
     job = store.get_job("job-1")
     assert job is not None
     assert job["status"] == "running"
@@ -40,24 +46,23 @@ def test_zero_credit_raises_without_ledger_touch(store):
 
 
 def test_sequential_double_submit_debits_twice(store):
-    assert store.balance("dubs") == 3
+    assert store.balance("dubs") == 5
     store.check_and_debit("dubs", "j1", ip="3.3.3.3")
     store.check_and_debit("dubs", "j2", ip="3.3.3.3")
-    assert store.balance("dubs") == 1
+    assert store.balance("dubs") == 3
 
 
-def test_three_cap_fourth_raises(store):
-    store.check_and_debit("cap", "c1", ip="4.4.4.4")
-    store.check_and_debit("cap", "c2", ip="4.4.4.4")
-    store.check_and_debit("cap", "c3", ip="4.4.4.4")
+def test_five_cap_sixth_raises(store):
+    for i in range(5):
+        store.check_and_debit("cap", f"c{i+1}", ip="4.4.4.4")
     assert store.balance("cap") == 0
     with pytest.raises(OutOfCredits):
-        store.check_and_debit("cap", "c4", ip="4.4.4.4")
+        store.check_and_debit("cap", "c6", ip="4.4.4.4")
     assert store.balance("cap") == 0
 
 
 def test_concurrent_double_submit_both_debited_once(store):
-    assert store.balance("race") == 3
+    assert store.balance("race") == 5
     errors: list = []
 
     def go(job_id: str):
@@ -70,15 +75,50 @@ def test_concurrent_double_submit_both_debited_once(store):
     [t.start() for t in ts]
     [t.join() for t in ts]
     assert errors == []
-    assert store.balance("race") == 1
+    assert store.balance("race") == 3
+
+
+def test_daily_limit_is_atomic_across_connections(tmp_path):
+    path = str(tmp_path / "credits.db")
+    first = CreditsStore(path)
+    second = CreditsStore(path)
+    daily_limit = 4
+    since_ts = time.time() - 86400
+    for i in range(daily_limit - 1):
+        first.check_and_debit(f"seed-{i}", f"seed-job-{i}")
+
+    barrier = threading.Barrier(2)
+    outcomes: list[str] = []
+
+    def submit(store: CreditsStore, job_id: str) -> None:
+        barrier.wait()
+        try:
+            store.check_and_debit(
+                job_id, job_id, daily_limit=daily_limit, since_ts=since_ts
+            )
+            outcomes.append("accepted")
+        except DailyLimitReached:
+            outcomes.append("limited")
+
+    threads = [
+        threading.Thread(target=submit, args=(first, "race-a")),
+        threading.Thread(target=submit, args=(second, "race-b")),
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert sorted(outcomes) == ["accepted", "limited"]
+    assert first.count_jobs_since(since_ts) == daily_limit
 
 
 def test_refund_restores_credit_and_marks_failed(store):
     store.check_and_debit("fred", "f1", ip="6.6.6.6")
-    assert store.balance("fred") == 2
+    assert store.balance("fred") == 4
     left = store.refund("fred", "f1", error="engine boom")
-    assert left == 3
-    assert store.balance("fred") == 3
+    assert left == 5
+    assert store.balance("fred") == 5
     assert store.get_job("f1")["status"] == "failed"
 
 
