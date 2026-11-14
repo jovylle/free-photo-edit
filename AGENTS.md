@@ -28,6 +28,8 @@ It is the same command CI runs. Green locally is the only definition of done.
 | `scripts/` | Repo tooling (check, ratchet, structure, guard, audit, deploy) |
 | `docs/` | `ARCHITECTURE.md`, `AI_WORKFLOW.md`, `decisions/`, `memories.md` |
 | `.ai/` | Ratchet baseline and metrics. Generated, reviewed, not hand-tuned |
+| `DESIGN.md` | Design tokens and visual direction for the project |
+| `REVISION` | Build revision stamped by `homeploy push`; served at `/api/config` |
 
 ## Dependency rule
 
@@ -63,6 +65,12 @@ A new `api/` module is an architecture change: add it to `scripts/structure.py` 
 - Money/credits logic: check-then-debit inside one transaction, refund on failure.
 - Comments explain *why*, one line. No commented-out code.
 - Keep responses and diffs small enough for a human to review in one sitting.
+
+<!-- design-kit:begin (managed) -->
+## Design work
+
+For any UI, page, layout, CSS, or HTML task, read `~/.agents/design/AGENTS.md` and follow it. It defines the design-token contract and the adopt/restyle workflow. Never invent a visual direction: the project `DESIGN.md` or `~/.agents/design/REGISTRY.md` decides it.
+<!-- design-kit:end -->
 
 ## When a check fails
 

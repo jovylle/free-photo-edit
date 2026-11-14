@@ -83,7 +83,7 @@ def test_turnstile_missing_token_403_zero_spend(client, monkeypatch):
     r = _edit(client, "bot1", token=None)
     assert r.status_code == 403, r.text
     assert FakeEngine.calls == 0
-    assert server.get_store().balance("bot1") == 3
+    assert server.get_store().balance("bot1") == 5
 
 
 def test_turnstile_rejected_token_403_zero_spend(client, monkeypatch):
@@ -95,7 +95,7 @@ def test_turnstile_rejected_token_403_zero_spend(client, monkeypatch):
     r = _edit(client, "bot2", token="fake-token")
     assert r.status_code == 403, r.text
     assert FakeEngine.calls == 0
-    assert server.get_store().balance("bot2") == 3
+    assert server.get_store().balance("bot2") == 5
 
 
 def test_turnstile_accepted_token_202(client, monkeypatch):
@@ -166,7 +166,7 @@ def test_ip_minute_limit_429_zero_spend(client, monkeypatch):
     r = _edit(client, "m3", ip="5.5.5.5", ua="ua-3")
     assert r.status_code == 429, r.text
     assert FakeEngine.calls == 3
-    assert server.get_store().balance("m3") == 3
+    assert server.get_store().balance("m3") == 5
 
 
 def test_ip_daily_limit_ignores_user_agent(client, monkeypatch):

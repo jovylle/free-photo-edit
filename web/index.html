@@ -3,113 +3,125 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>✨</text></svg>">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%23535695' d='M11 2l2 5.1 5.1 2-5.1 2-2 5.1-2-5.1-5.1-2 5.1-2z'/%3E%3Cpath fill='%23535695' d='M18 14.5l.9 2.3 2.3.9-2.3.9-.9 2.3-.9-2.3-2.3-.9 2.3-.9z'/%3E%3C/svg%3E">
 <meta name="api-base" content="">
-<title>Free Photo Edit — free photo editing</title>
-<meta name="description" content="Edit any photo by typing what you want — Tagalog, English, or Bisaya. 3 free edits, no account.">
+<title>Free Photo Edit — edit any photo by typing</title>
+<meta name="description" content="Edit any photo by typing what you want — Tagalog, English, or Bisaya. 5 free edits a day, no account.">
 <link rel="canonical" href="https://freephoto.uft1.com/">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="Free Photo Edit">
 <meta property="og:url" content="https://freephoto.uft1.com/">
 <meta property="og:title" content="Free Photo Edit — i-type lang, edited na">
-<meta property="og:description" content="Tagalog, English, o Bisaya. 3 free edits, no account, download agad.">
-<meta property="og:image" content="https://freephoto.uft1.com/og.png">
+<meta property="og:description" content="Tagalog, English, o Bisaya. 5 free edits a day, no account, download agad.">
+<meta property="og:image" content="https://freephoto.uft1.com/og-card.png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
 <meta property="og:image:alt" content="Free Photo Edit — type what you want and download the edited photo">
 <meta property="og:locale" content="en_PH">
 <meta name="twitter:card" content="summary_large_image">
-<link rel="stylesheet" href="site.css">
+<meta name="twitter:title" content="Free Photo Edit — i-type lang, edited na">
+<meta name="twitter:description" content="Tagalog, English, o Bisaya. 5 free edits a day, no account, download agad.">
+<meta name="twitter:image" content="https://freephoto.uft1.com/og-card.png">
+<meta name="theme-color" content="#eeedf5">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;700&family=Karla:wght@400;500&display=swap">
+<link rel="stylesheet" href="site.css?v=5">
 <script>try { document.documentElement.dataset.theme = localStorage.getItem("fpe-theme") === "dark" ? "dark" : "light"; } catch (e) { document.documentElement.dataset.theme = "light"; }</script>
 <style>
   * { box-sizing:border-box }
-  body { margin:0; background:var(--bg); color:var(--ink); font:16px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; }
-  header { display:flex; align-items:center; gap:12px; padding:14px 20px; border-bottom:1px solid var(--line); }
-  .brand { font-size:18px; font-weight:700; color:var(--ink); margin:0 }
-  .hero-h { font-size:clamp(24px,6.2vw,30px); line-height:1.25; margin:0 0 6px }
-  .hero-sub { margin:0 0 16px; color:var(--muted); font-size:15px; max-width:54ch }
-  header nav { margin-left:auto; display:flex; gap:10px; align-items:center }
-  #creditsBadge { background:var(--chip); border:1px solid var(--line); border-radius:999px; padding:4px 14px; font-size:14px; }
-  main { max-width:700px; margin:0 auto; padding:20px; display:grid; gap:18px }
-  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px }
-  .card h2, .card h3 { margin:0 0 10px; font-size:15px }
-  #dropzone { display:grid; gap:2px; justify-items:center; border:2px dashed var(--line); border-radius:12px; padding:22px 20px; text-align:center; color:var(--muted); cursor:pointer; }
-  #dropzone .dz-icon { font-size:24px; line-height:1.3 }
-  #dropzone .dz-title { color:var(--ink); font-weight:600; font-size:15px }
-  #dropzone .dz-sub { font-size:13px }
-  #dropzone.over { border-color:var(--accent); color:var(--ink); }
-  #thumbs { display:flex; gap:10px; margin-top:12px; flex-wrap:wrap; justify-content:center }
-  #thumbs img { width:160px; height:160px; object-fit:cover; border-radius:8px; border:1px solid var(--line) }
+  body { margin:0; background:var(--bg); color:var(--ink); font:var(--step-0)/var(--line-height) var(--font-text); }
+  header { display:flex; align-items:center; gap:var(--space-xs); padding:var(--space-s) var(--space-l); max-width:1024px; margin:0 auto; }
+  .brand { font:700 var(--step-1)/1.2 var(--font-display); color:var(--ink); margin:0 }
+  .hero-h { font:700 clamp(1.5rem,4.2vw,2.441rem)/1.2 var(--font-display); letter-spacing:-.01em; margin:0 0 var(--space-2xs) }
+  .hero-sub { margin:0 0 var(--space-m); color:var(--muted); font-size:var(--step-0); max-width:54ch }
+  header nav { margin-left:auto; display:flex; gap:var(--space-2xs); align-items:center }
+  #creditsBadge { display:inline-flex; align-items:center; min-height:44px; background:var(--card); color:var(--ink); padding:var(--space-2xs) var(--space-xs); font-size:var(--step--1); }
+  main { max-width:1024px; margin:0 auto; padding:0 var(--space-l) var(--space-3xl); display:grid; gap:var(--space-s) }
+  .card { background:var(--card); padding:var(--space-l); }
+  .card h2, .card h3 { margin:0 0 var(--space-s); font:700 var(--step-1)/1.3 var(--font-display) }
+  #dropzone { display:grid; gap:var(--space-3xs); justify-items:center; background:var(--input); padding:var(--space-xl) var(--space-m); text-align:center; color:var(--muted); cursor:pointer; }
+  #dropzone .dz-icon { font-size:var(--step-2); line-height:1.3 }
+  #dropzone .dz-title { color:var(--ink); font-weight:600; font-size:var(--step-0) }
+  #dropzone .dz-sub { font-size:var(--step--1) }
+  #dropzone.over { outline:2px solid var(--accent); outline-offset:-2px; color:var(--ink); }
+  #thumbs { display:flex; gap:var(--space-2xs); margin-top:var(--space-xs); flex-wrap:wrap; justify-content:center }
+  #thumbs img { width:160px; height:160px; object-fit:cover }
   .thumb { position:relative }
-  .thumb button { position:absolute; top:-8px; right:-8px; width:24px; height:24px; border-radius:50%; border:1px solid var(--line); background:#000; color:#fff; cursor:pointer }
-  .thumb button::after { content:""; position:absolute; inset:-10px; border-radius:50% }
-  textarea { width:100%; background:var(--input); color:var(--ink); border:1px solid var(--line); border-radius:8px; padding:10px; font:inherit; min-height:80px; resize:vertical }
-  .row { display:flex; gap:12px; align-items:center; flex-wrap:wrap }
-  .presets { display:flex; flex-wrap:wrap; gap:8px; margin:8px 0 12px }
-  .preset { border:1px solid var(--line); border-radius:999px; padding:6px 14px; cursor:pointer; background:var(--input); font-size:14px; white-space:nowrap }
+  .thumb button { position:absolute; top:0; right:0; width:24px; height:24px; border:0; background:var(--ink); color:var(--bg); cursor:pointer }
+  .thumb button::after { content:""; position:absolute; inset:-10px }
+  textarea { width:100%; background:var(--input); color:var(--ink); border:0; padding:var(--space-xs); font:inherit; min-height:80px; resize:vertical }
+  .row { display:flex; gap:var(--space-xs); align-items:center; flex-wrap:wrap }
+  .presets { display:flex; flex-wrap:wrap; gap:var(--space-2xs); margin:var(--space-2xs) 0 var(--space-xs) }
+  .preset { display:inline-flex; align-items:center; gap:var(--space-3xs); border:0; padding:var(--space-2xs) var(--space-xs); cursor:pointer; background:var(--input); color:var(--ink); font:inherit; font-size:var(--step--1); white-space:nowrap }
   .preset b { word-spacing:3px }
   .preset small { display:none }
-  .preset.active { border-color:var(--accent); background:var(--chip); }
-  .preset.active b { color:var(--accent); }
-  details.card summary { cursor:pointer; font-size:15px; font-weight:700 }
-  #editAnother { width:100%; background:transparent; border:1px dashed var(--line); color:var(--muted); border-radius:10px; padding:10px; cursor:pointer; font:inherit; font-size:14px; margin-top:4px }
-  #result { display:grid; gap:14px }
-  #submitBtn { background:var(--accent); border:0; border-radius:999px; padding:10px 28px; font-size:16px; font-weight:700; cursor:pointer; color:var(--onaccent) }
+  .preset.active { background:var(--ink); color:var(--bg) }
+  .preset.active b { color:var(--bg) }
+  #showcaseGrid { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:var(--space-xs) }
+  #showcaseGrid figure { margin:0 }
+  #showcaseGrid img { width:100%; display:block; background:var(--input) }
+  #showcaseGrid figcaption { margin-top:var(--space-3xs); font-size:var(--step--1); color:var(--muted) }
+  details.card summary { cursor:pointer; font:700 var(--step-0)/1.3 var(--font-display) }
+  #editAnother { width:100%; background:var(--input); border:0; color:var(--muted); padding:var(--space-xs); cursor:pointer; font:inherit; font-size:var(--step--1); margin-top:var(--space-2xs) }
+  #result { display:grid; gap:var(--space-xs) }
+  #submitBtn { background:var(--accent); border:0; padding:var(--space-xs) var(--space-l); font:700 var(--step-0) var(--font-display); cursor:pointer; color:var(--onaccent) }
+  #submitBtn:hover { background:var(--accent-alt) }
   #submitBtn:disabled { opacity:.5; cursor:wait }
-  #status { min-height:1.5em; color:var(--muted); font-size:14px }
+  #status { min-height:1.5em; color:var(--muted); font-size:var(--step--1) }
   #status.error { color:var(--err) }
   .hidden { display:none !important }
-  .field { display:grid; gap:6px; margin-bottom:12px }
-  .field label { font-size:13px; color:var(--muted) }
-  .muted { color:var(--muted); font-size:14px }
-  #history { display:grid; gap:14px }
-  .job { background:var(--input); border:1px solid var(--line); border-radius:10px; padding:12px; display:grid; gap:10px }
-  .job-head { display:flex; gap:10px; align-items:baseline; justify-content:space-between; flex-wrap:wrap }
-  .job-head b { font-size:14px }
-  .job-head small { color:var(--muted); font-size:12px }
-  .job-thumbs { display:flex; gap:8px; flex-wrap:wrap }
-  .job-thumbs img { width:72px; height:72px; object-fit:cover; border-radius:8px; border:1px solid var(--line) }
-  .job-spin { color:var(--accent); font-size:14px; margin:0 }
-  .job-fail { color:var(--err); font-size:14px; margin:0 }
-  .dl { background:transparent; border:1px solid var(--accent); color:var(--accent); border-radius:999px; padding:6px 18px; font-size:14px; text-decoration:none; display:inline-flex; align-items:center; justify-content:center; min-height:44px; cursor:pointer; font-family:inherit }
-  .dl.solid { background:var(--accent); color:var(--onaccent); border:0; font-weight:700 }
+  .field { display:grid; gap:var(--space-3xs); margin-bottom:var(--space-xs) }
+  .field label { font-size:var(--step--1); color:var(--muted) }
+  #promptLabel{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0;padding:0;margin:-1px}
+  .muted { color:var(--muted); font-size:var(--step--1) }
+  #history { display:grid; gap:var(--space-xs) }
+  .job { background:var(--input); padding:var(--space-s); display:grid; gap:var(--space-2xs) }
+  .job-head { display:flex; gap:var(--space-2xs); align-items:baseline; justify-content:space-between; flex-wrap:wrap }
+  .job-head b { font-size:var(--step--1) }
+  .job-head small { color:var(--muted); font-size:var(--step--1) }
+  .job-thumbs { display:flex; gap:var(--space-2xs); flex-wrap:wrap }
+  .job-thumbs img { width:72px; height:72px; object-fit:cover }
+  .job-spin { color:var(--accent); font-size:var(--step--1); margin:0 }
+  .job-fail { color:var(--err); font-size:var(--step--1); margin:0 }
+  .dl { background:var(--input); border:0; color:var(--link); padding:var(--space-2xs) var(--space-s); font-size:var(--step--1); text-decoration:none; display:inline-flex; align-items:center; justify-content:center; min-height:44px; cursor:pointer; font-family:inherit }
+  .dl.solid { background:var(--accent); color:var(--onaccent); font-weight:700 }
   .dl:disabled { opacity:.5; cursor:wait }
-  #donate { display:flex; gap:10px; flex-wrap:wrap; align-items:center }
-  #packs { display:flex; gap:10px; flex-wrap:wrap }
-  .pack { flex:1 1 150px; display:grid; gap:2px; text-align:left; font:inherit; color:var(--ink); background:var(--input); border:1px solid var(--line); border-radius:10px; padding:10px 14px; cursor:pointer; min-height:44px }
-  .pack b { font-size:15px }
-  .pack small { color:var(--muted); font-size:12px }
+  #donate { display:flex; gap:var(--space-2xs); flex-wrap:wrap; align-items:center }
+  #donate summary { line-height:44px }
+  #packs { display:flex; gap:var(--space-2xs); flex-wrap:wrap }
+  .pack { flex:1 1 150px; display:grid; gap:2px; text-align:left; font:inherit; color:var(--ink); background:var(--input); border:0; padding:var(--space-2xs) var(--space-xs); cursor:pointer; min-height:44px }
+  .pack b { font-size:var(--step-0) }
+  .pack small { color:var(--muted); font-size:var(--step--1) }
   .pack:disabled { opacity:.5; cursor:wait }
   #buyStatus.error { color:var(--err) }
-  .compare { position:relative; overflow:hidden; border-radius:10px; background:var(--input) }
+  .compare { position:relative; overflow:hidden; background:var(--input) }
   .compare img { display:block; width:100% }
   .compare .compare-before { position:absolute; inset:0; height:100%; object-fit:contain; background:var(--input) }
   .compare-labels { margin:0; text-align:center }
   .job input[type=range] { width:100%; min-height:44px; accent-color:var(--accent) }
   button, summary { min-height:44px }
   button:focus-visible, a:focus-visible, #dropzone:focus-visible { outline:3px solid var(--accent); outline-offset:3px }
-  @media (max-width:480px) { header { flex-wrap:wrap; padding:14px 16px } header nav { margin-left:0; flex-wrap:wrap } main { padding:16px } #submitBtn { width:100% } }
-  #adslot { border:1px dashed var(--line); border-radius:10px; padding:14px; text-align:center; color:var(--muted); font-size:13px }
+  @media (max-width:480px) { header { flex-wrap:wrap; padding:var(--space-s) } header nav { margin-left:0; flex-wrap:wrap } main { padding:0 var(--space-s) var(--space-2xl) } .card { padding:var(--space-m) } #submitBtn { width:100% } }
+  #adslot { background:var(--input); padding:var(--space-s); text-align:center; color:var(--muted); font-size:var(--step--1) }
 </style>
 </head>
 <body>
 <header>
-  <div class="brand">✨ Free Photo Edit</div>
-  <nav><span id="creditsBadge" title="Edits remaining">free edits: …</span><button id="themeBtn" class="dl" type="button">🌙 Dark</button></nav>
+  <div class="brand"><svg class="ico" aria-hidden="true"><use href="icons.svg#i-sparkles"></use></svg> Free Photo Edit</div>
+  <nav><span id="creditsBadge" title="Edits remaining">free edits: …</span><button id="themeBtn" class="dl" type="button"><svg class="ico" aria-hidden="true"><use href="icons.svg#i-moon"></use></svg> Dark</button></nav>
 </header>
 <main>
   <section class="card">
     <h1 class="hero-h">Type it. Get your photo edited.</h1>
-    <p class="hero-sub">Describe the change in Tagalog, English, or Bisaya. 3 free edits, no signup, usually under a minute.</p>
     <div id="formBody">
       <div id="dropzone" tabindex="0" role="button" aria-label="Add up to 5 photos">
-        <span class="dz-icon" aria-hidden="true">🖼️</span>
+        <span class="dz-icon" aria-hidden="true"><svg class="ico"><use href="icons.svg#i-image"></use></svg></span>
         <span class="dz-title">Add photos</span>
         <span class="dz-sub">Tap to choose, or drop files here</span>
         <input id="fileInput" class="hidden" type="file" accept="image/jpeg,image/png,image/webp" multiple>
         <div id="thumbs"></div>
       </div>
-      <p style="color:var(--muted);font-size:13px;margin:10px 0 0">1–5 photos · JPG, PNG or WebP · 5 MB each. Paste a screenshot with Ctrl+V.</p>
       <div class="field" style="margin-top:12px">
         <label for="prompt" id="promptLabel">Instruction (required)</label>
         <textarea id="prompt" rows="3" maxlength="2000" placeholder="TL: Gawing formal ang damit. EN: Make the clothes formal. Bisaya: Himog pormal ang sinina."></textarea>
@@ -117,18 +129,18 @@
       </div>
       <div id="tsWidget" style="margin-top:8px"></div>
       <div class="row" style="margin-top:4px">
-        <button id="submitBtn">Edit photo ✨</button>
+        <button id="submitBtn"><svg class="ico" aria-hidden="true"><use href="icons.svg#i-sparkles"></use></svg> Edit photo</button>
       </div>
-      <p class="muted" style="margin:8px 0 0;font-size:13px">Results are deleted after 7 days. Download yours right away.</p>
+      <p class="muted" style="margin:8px 0 0;font-size:13px">Only you can open your edits — they are never shown publicly. Results are deleted after 7 days, so download yours right away.</p>
     </div>
-    <button id="editAnother" class="hidden" type="button">📷 Edit another photo…</button>
+    <button id="editAnother" class="hidden" type="button"><svg class="ico" aria-hidden="true"><use href="icons.svg#i-camera"></use></svg> Edit another photo…</button>
     <div id="status" aria-live="polite"></div>
     <div id="result" class="hidden" style="margin-top:12px"></div>
   </section>
 
   <details class="card">
     <summary>Past edits <small id="histCount" style="color:var(--muted);font-weight:400"></small></summary>
-    <div id="history" style="margin-top:12px"><p class="muted">Loading…</p></div>
+    <div id="history"><p class="muted">Loading…</p></div>
   </details>
 
   <section class="card" id="buyCard">
@@ -136,29 +148,35 @@
     <div id="packs" role="group" aria-label="Edit packs"><p class="muted">Loading packs…</p></div>
     <div class="field" style="max-width:340px;margin:12px 0 0">
       <label for="buyEmail">Email — so we can recover your edits if this browser loses its data</label>
-      <input id="buyEmail" type="email" autocomplete="email" maxlength="200" placeholder="you@example.com" style="background:var(--input);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:10px;font:inherit">
+      <input id="buyEmail" type="email" autocomplete="email" maxlength="200" placeholder="you@example.com" style="background:var(--input);color:var(--ink);border:0;padding:10px;font:inherit">
     </div>
     <p class="muted" id="buyStatus" aria-live="polite" style="margin:10px 0 0"></p>
     <p class="muted" style="margin:10px 0 0">Paid via GCash, Maya, GrabPay or card — handled by Xendit. Your edits are added after payment confirms.</p>
+  </section>
+
+  <section class="card" id="showcase" hidden>
+    <h2>Showcase</h2>
+    <p class="muted" style="margin:0 0 var(--space-s);font-size:var(--step--1)">A few edits picked by hand. Anyone else's edit stays private to them.</p>
+    <div id="showcaseGrid"></div>
   </section>
 
   <section class="card" id="donateCard">
     <h2>Support free edits</h2>
     <div id="donate">
       <details>
-        <summary style="cursor:pointer">💚 Donate via GCash — tap to show QR</summary>
-        <img id="gcashQr" src="gcash-qr.png" alt="GCash QR — scan to donate" style="width:190px;border-radius:10px;margin-top:10px" onerror="this.remove()">
+        <summary style="cursor:pointer"><svg class="ico" aria-hidden="true"><use href="icons.svg#i-heart"></use></svg> Donate via GCash — tap to show QR</summary>
+        <img id="gcashQr" src="gcash-qr.png" alt="GCash QR — scan to donate" style="width:190px;margin-top:10px" onerror="this.remove()">
       </details>
-      <a class="dl" id="kofiLink" href="https://ko-fi.com/twe222" target="_blank" rel="noopener">☕ Ko-fi</a>
+      <a class="dl" id="kofiLink" href="https://ko-fi.com/twe222" target="_blank" rel="noopener"><svg class="ico" aria-hidden="true"><use href="icons.svg#i-coffee"></use></svg> Ko-fi</a>
     </div>
-    <p class="muted" style="margin:10px 0 0">Scan the QR with GCash, or tap Ko-fi — donations keep the free edits running. 🙏</p>
+    <p class="muted" style="margin:10px 0 0">Scan the QR with GCash, or tap Ko-fi — donations keep the free edits running.</p>
     <div id="adslot" hidden></div>
   </section>
 </main>
 <footer class="site-foot">
   <a href="index.html">Home</a> · <a href="about.html">About</a> · <a href="faq.html">FAQ</a> · <a href="privacy.html">Privacy</a> · <a href="terms.html">Terms</a> · <a href="https://ko-fi.com/twe222" target="_blank" rel="noopener">Ko-fi</a>
 </footer>
-<script src="site.js" defer></script>
-<script src="app.js?v=20261111c"></script>
+<script src="site.js?v=3" defer></script>
+<script src="app.js?v=20261114b"></script>
 </body>
 </html>

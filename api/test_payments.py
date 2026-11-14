@@ -196,7 +196,7 @@ def test_webhook_credits_once(client):
     assert r.status_code == 200, r.text
     assert r.json()["credited"] == 10
     store = server.get_store()
-    assert store.balance("buyer") == 13  # 3 free + 10 bought
+    assert store.balance("buyer") == 15  # 5 free + 10 bought
     assert store.paid_total("buyer") == 10
     assert store.payment("ps_test_1")["status"] == "paid"
 
@@ -206,14 +206,14 @@ def test_webhook_duplicate_delivery_is_noop(client):
     assert _webhook(client, _paid_event()).status_code == 200
     r = _webhook(client, _paid_event())
     assert r.status_code == 200 and r.json()["credited"] == 0
-    assert server.get_store().balance("buyer") == 13
+    assert server.get_store().balance("buyer") == 15
 
 
 def test_webhook_bad_token_401(client):
     _pending()
     assert _webhook(client, _paid_event(), token="wrong").status_code == 401
     assert _webhook(client, _paid_event(), token="").status_code == 401
-    assert server.get_store().balance("buyer") == 3
+    assert server.get_store().balance("buyer") == 5
 
 
 def test_webhook_unknown_session_is_noop(client):
@@ -225,7 +225,7 @@ def test_webhook_amount_below_expected_400(client):
     _pending()
     assert _webhook(client, _paid_event(amount=48)).status_code == 400
     store = server.get_store()
-    assert store.balance("buyer") == 3
+    assert store.balance("buyer") == 5
     assert store.payment("ps_test_1")["status"] == "pending"
 
 
@@ -233,7 +233,7 @@ def test_webhook_other_event_type_is_noop(client):
     _pending()
     r = _webhook(client, _paid_event(kind="payment_session.expired"))
     assert r.status_code == 200 and r.json()["credited"] == 0
-    assert server.get_store().balance("buyer") == 3
+    assert server.get_store().balance("buyer") == 5
 
 
 def test_webhook_unset_token_503(client, monkeypatch):
@@ -266,10 +266,10 @@ def test_mark_paid_is_atomic_and_idempotent(tmp_path):
     store = CreditsStore(str(tmp_path / "c.db"))
     store.create_payment("ps_1", "u", "starter", 10, 49)
     assert store.mark_paid("ps_1", 49) == 10
-    assert store.balance("u") == 13
+    assert store.balance("u") == 15
     assert store.paid_total("u") == 10
     assert store.mark_paid("ps_1", 49) == 0
-    assert store.balance("u") == 13
+    assert store.balance("u") == 15
     assert store.paid_total("u") == 10
     with pytest.raises(KeyError):
         store.mark_paid("ps_nope", 49)
@@ -279,7 +279,7 @@ def test_mark_paid_below_price_credits_nothing(tmp_path):
     store = CreditsStore(str(tmp_path / "c.db"))
     store.create_payment("ps_2", "u", "starter", 10, 49)
     assert store.mark_paid("ps_2", 48) == 0
-    assert store.balance("u") == 3
+    assert store.balance("u") == 5
     assert store.payment("ps_2")["status"] == "pending"
 
 
@@ -293,7 +293,7 @@ def test_paid_user_bypasses_global_daily_cap(client, monkeypatch):
     _buy(store, "paying")
     r = _edit(client, "paying", ip="8.8.8.8")
     assert r.status_code == 202, r.text
-    assert store.balance("paying") == 12
+    assert store.balance("paying") == 14
 
 
 def test_paid_user_bypasses_device_daily_limit(client, monkeypatch):

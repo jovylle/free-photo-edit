@@ -68,14 +68,14 @@ def _wait_done(client, job_id, timeout=10.0):
 
 def test_edit_202_and_poll_until_done(client):
     store = server.get_store()
-    assert store.balance("ann") == 3
+    assert store.balance("ann") == 5
     r = _edit(client, "ann")
     assert r.status_code == 202, r.text
     job_id = r.json()["job_id"]
-    assert r.json()["credits_left"] == 2
+    assert r.json()["credits_left"] == 4
     body = _wait_done(client, job_id)
     assert body["image_url"] == f"/api/result/{job_id}/file"
-    f = client.get(f"/api/result/{job_id}/file")
+    f = client.get(f"/api/result/{job_id}/file?user=ann")
     assert f.status_code == 200
     assert f.content.startswith(b"\x89PNG")
     assert FakeEngine.calls == 1
@@ -122,7 +122,7 @@ def test_extra_upload_rejected_without_debit(client, extra_field):
     ])
     assert r.status_code == 400, r.text
     assert FakeEngine.calls == 0
-    assert server.get_store().balance("extra") == 3
+    assert server.get_store().balance("extra") == 5
     assert server.get_store().user_jobs("extra") == []
 
 
@@ -134,8 +134,8 @@ def test_multiple_photos_accepted(client):
     assert r.status_code == 202, r.text
     job_id = r.json()["job_id"]
     for index in (0, 1):
-        assert client.get(f"/api/result/{job_id}/input/{index}").status_code == 200
-    assert client.get(f"/api/result/{job_id}/input/2").status_code == 404
+        assert client.get(f"/api/result/{job_id}/input/{index}?user=multi").status_code == 200
+    assert client.get(f"/api/result/{job_id}/input/2?user=multi").status_code == 404
 
 
 @pytest.mark.parametrize("failure", ["mkdir", "write_bytes", "thread_start"])
@@ -161,7 +161,7 @@ def test_setup_failure_refunds_and_releases_slots(client, monkeypatch, failure):
     assert r.status_code == 502, r.text
     assert FakeEngine.calls == 0
     store = server.get_store()
-    assert store.balance("setup") == 3
+    assert store.balance("setup") == 5
     job = store.user_jobs("setup")[0]
     assert job["status"] == "failed"
     assert "setup boom" in store.get_job(job["id"])["error"]
@@ -185,7 +185,7 @@ def test_missing_or_empty_image_rejected(client, files):
     r = _edit(client, "missing", files=files)
     assert r.status_code == 400, r.text
     assert FakeEngine.calls == 0
-    assert server.get_store().balance("missing") == 3
+    assert server.get_store().balance("missing") == 5
 
 
 @pytest.mark.parametrize("ctype", ["image/jpeg", "image/png", "image/webp"])
@@ -194,13 +194,27 @@ def test_allowed_mime_at_size_limit(client, ctype):
     r = _edit(client, "boundary", files=_file(payload, ctype))
     assert r.status_code == 202, r.text
     _wait_done(client, r.json()["job_id"])
-    assert server.get_store().balance("boundary") == 2
+    assert server.get_store().balance("boundary") == 4
 
 
 def test_credits_endpoint(client):
     r = client.get("/api/credits", params={"user": "ann"})
     assert r.status_code == 200
-    assert r.json()["credits_left"] == 3
+    assert r.json()["credits_left"] == 5
+
+
+def test_config_reports_revision(client: TestClient) -> None:
+    body = client.get("/api/config").json()
+    assert isinstance(body["revision"], str) and body["revision"]
+
+
+def test_metrics_exposes_counts_without_identity(client: TestClient) -> None:
+    r = client.get("/metrics")
+    assert r.status_code == 200
+    assert "photoedit_up 1" in r.text
+    assert "photoedit_users_total" in r.text
+    assert "photoedit_revision_info{revision=" in r.text
+    assert "ann" not in r.text  # no per-user data
 
 
 def test_jobs_history(client):
@@ -231,3 +245,25 @@ def test_cors_allows_only_configured_origin(client, monkeypatch):
         "Access-Control-Request-Method": "POST"})
     assert pre.status_code == 204
     assert pre.headers.get("access-control-allow-origin") == "https://free-photo-edit-dev.pages.dev"
+
+
+def test_result_file_is_owner_only(client):
+    """A leaked job id must not be enough to read someone's edited photo."""
+    r = _edit(client, "owner")
+    assert r.status_code == 202, r.text
+    job_id = r.json()["job_id"]
+    _wait_done(client, job_id)
+    assert client.get(f"/api/result/{job_id}/file?user=owner").status_code == 200
+    assert client.get(f"/api/result/{job_id}/file?user=someone-else").status_code == 404
+    assert client.get(f"/api/result/{job_id}/file").status_code == 404
+    assert client.get(f"/api/result/{job_id}/input/0?user=someone-else").status_code == 404
+
+
+def test_cors_only_for_the_dev_pages_origin(client):
+    """The staging frontend may call this API; no other origin gets the header."""
+    ok = client.get("/api/config", headers={"Origin": "https://free-photo-edit-dev.pages.dev"})
+    assert ok.headers.get("access-control-allow-origin") == "https://free-photo-edit-dev.pages.dev"
+    preview = client.get("/api/config", headers={"Origin": "https://abc123.free-photo-edit-dev.pages.dev"})
+    assert preview.headers.get("access-control-allow-origin") == "https://abc123.free-photo-edit-dev.pages.dev"
+    other = client.get("/api/config", headers={"Origin": "https://evil.example"})
+    assert "access-control-allow-origin" not in other.headers

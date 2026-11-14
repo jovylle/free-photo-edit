@@ -66,6 +66,15 @@
               ph: "TL: Gawing formal ang damit. EN: Make the clothes formal. Bisaya: Himog pormal ang sinina." },
   };
 
+  // Inline icons from icons.svg — the site uses no emoji.
+  const PRESET_ICONS = { background: "i-landscape", clothes: "i-shirt", restore: "i-sparkles", custom: "i-pencil" };
+  function ico(name) {
+    return '<svg class="ico" aria-hidden="true"><use href="icons.svg#' + name + '"></use></svg>';
+  }
+  function plain(text) {
+    return String(text || "").replace(/[\p{Extended_Pictographic}\uFE0F]/gu, "").trim();
+  }
+
   const uq = "?user=" + encodeURIComponent(user);
 
   function setStatus(msg, isError) {
@@ -171,6 +180,35 @@
     }
   }
 
+  // Owner-curated gallery: edit web/showcase.json, drop files in web/showcase/.
+  // Entries are only what the owner chose to publish — never a user's own job.
+  async function loadShowcase() {
+    const card = document.getElementById("showcase");
+    const box = document.getElementById("showcaseGrid");
+    if (!card || !box) return;
+    let items = null;
+    try {
+      const r = await fetch("showcase.json", { cache: "no-cache" });
+      if (r.ok) items = (await r.json());
+    } catch (e) { /* no showcase */ }
+    if (!Array.isArray(items) || !items.length) return;
+    box.innerHTML = "";
+    items.forEach((it) => {
+      const fig = document.createElement("figure");
+      const img = document.createElement("img");
+      img.loading = "lazy";
+      img.decoding = "async";
+      img.src = it.image;
+      img.alt = it.note || (it.preset ? it.preset + " edit" : "Edited photo");
+      fig.appendChild(img);
+      const cap = document.createElement("figcaption");
+      cap.textContent = [it.preset, it.note].filter(Boolean).join(" — ");
+      fig.appendChild(cap);
+      box.appendChild(fig);
+    });
+    card.hidden = false;
+  }
+
   async function loadPacks() {
     let packs = null;
     try {
@@ -221,8 +259,8 @@
         const n = (await r.json()).credits_left;
         setCredits(n);
         if (start === null || n > start) {
-          setStatus("Credits added ✨");
-          setBuyStatus("Credits added — thanks for supporting free edits. 🙏");
+          setStatus("Credits added");
+          setBuyStatus("Credits added — thanks for supporting free edits.");
           return;
         }
       } catch (e) { /* next tick */ }
@@ -297,10 +335,10 @@
     } catch (e) { /* builtin fallback */ }
     if (!list) {
       list = [
-        {id: "background", label: "🏙 Background", hint: "up to 5 photos"},
-        {id: "clothes", label: "👔 Clothes", hint: "up to 5 photos"},
-        {id: "restore", label: "✨ Restore", hint: "up to 5 photos"},
-        {id: "custom", label: "✏ Custom", hint: "free-form"},
+        {id: "background", label: "Background", hint: "up to 5 photos"},
+        {id: "clothes", label: "Clothes", hint: "up to 5 photos"},
+        {id: "restore", label: "Restore", hint: "up to 5 photos"},
+        {id: "custom", label: "Custom", hint: "free-form"},
       ];
     }
     presetsBox.innerHTML = "";
@@ -309,8 +347,8 @@
       el.type = "button";
       el.className = "preset";
       el.dataset.id = p.id;
-      el.innerHTML = "<b></b><small></small>";
-      el.querySelector("b").textContent = p.label;
+      el.innerHTML = ico(PRESET_ICONS[p.id] || "i-pencil") + "<b></b><small></small>";
+      el.querySelector("b").textContent = plain(p.label);
       el.querySelector("small").textContent = p.hint;
       const pick = () => selectPreset(p.id);
       el.onclick = pick;
@@ -428,7 +466,7 @@
         await loadHistory();
         stageResult(j);
         setStatus(j.artifacts_expired ? "Photos expired after seven days. Upload a photo to edit again."
-                  : j.status === "done" ? "Job " + jobId + " done ✨"
+                  : j.status === "done" ? "Job " + jobId + " done"
                                       : "Job " + jobId + " failed — credit refunded.", j.status === "failed");
         refreshCredits();
       }
@@ -463,7 +501,7 @@
     head.className = "job-head";
     head.innerHTML = "<b></b><small></small>";
     head.querySelector("b").textContent =
-      (j.status === "done" ? "✅ " : j.status === "failed" ? "❌ " : "⏳ Building… ") + j.preset;
+      (j.status === "running" || !j.status ? "Building… " : "") + j.preset;
     head.querySelector("small").textContent = fmtTime(j.created_at);
     card.appendChild(head);
 
@@ -490,7 +528,7 @@
       const after = document.createElement("img");
       after.alt = "edited result";
       after.loading = "lazy";
-      after.style.cssText = "width:100%;height:auto;border-radius:10px;border:1px solid var(--line);background:#0d0b09";
+      after.style.cssText = "width:100%;height:auto;border-radius:10px;border:0;background:var(--bg)";
       after.src = resultUrl(j.image_url);
       const compare = document.createElement("div");
       compare.className = "compare";
@@ -520,11 +558,11 @@
       const dl = document.createElement("button");
       dl.type = "button";
       dl.className = "dl solid";
-      dl.textContent = "⬇ Download result";
+      dl.innerHTML = ico("i-download") + " Download result";
       dl.onclick = async () => {
         dl.disabled = true;
-        const old = dl.textContent;
-        dl.textContent = "⏳ Saving…";
+        const old = dl.innerHTML;
+        dl.innerHTML = ico("i-clock") + " Saving…";
         try {
           const r = await fetch(resultUrl(j.image_url));
           if (!r.ok) throw new Error("download " + r.status);
@@ -541,7 +579,7 @@
           setStatus("Download failed: " + e.message, true);
         } finally {
           dl.disabled = false;
-          dl.textContent = old;
+          dl.innerHTML = old;
         }
       };
       row.appendChild(dl);
@@ -550,9 +588,9 @@
       const sh = document.createElement("button");
       sh.type = "button";
       sh.className = "dl";
-      sh.textContent = "📤 Share";
+      sh.innerHTML = ico("i-share") + " Share";
       sh.onclick = async () => {
-        const text = "Edited with Free Photo Edit — libre, 3 free edits, walang account. " + location.origin + "/";
+        const text = "Edited with Free Photo Edit — libre, 5 free edits a day, walang account. " + location.origin + "/";
         try {
           let blob = null;
           try {
@@ -590,7 +628,7 @@
     } else {
       const p = document.createElement("p");
       p.className = "job-spin";
-      p.textContent = "⏳ Editing… you can close this tab — it will be here when you return.";
+      p.textContent = "Editing… you can close this tab — it will be here when you return.";
       card.appendChild(p);
     }
     return card;
@@ -659,7 +697,7 @@
       }
       if (r.status !== 202 || !data.job_id) throw new Error(data.detail || ("edit failed: " + r.status));
       setCredits(data.credits_left);
-      setStatus("Job " + data.job_id + " editing… ⏳");
+      setStatus("Job " + data.job_id + " editing…");
       formBody.classList.add("hidden"); // photo + prompt kept as-is for retry
       editAnother.classList.remove("hidden");
       resultBox.classList.add("hidden");
@@ -702,5 +740,6 @@
   refreshCredits();
   loadHistory();
   loadPacks();
+  loadShowcase();
   confirmPayment();
 })();

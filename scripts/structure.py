@@ -40,8 +40,8 @@ API_FILES = {f"{name}.py" for name in LAYER} | {"test_abuse.py", "test_async_que
 TOP_LEVEL = {
     ".ai", ".github", ".githooks", ".git", "api", "docs", "scripts", "tests", "web",
     ".dockerignore", ".env.example", ".gitignore",
-    "AGENTS.md", "BUILD-BRIEF.md", "CLAUDE.md", "CODEOWNERS", "Dockerfile",
-    "README.md", "deploy.yml", "pyproject.toml", "requirements.txt",
+    "AGENTS.md", "BUILD-BRIEF.md", "CLAUDE.md", "CODEOWNERS", "DESIGN.md", "Dockerfile",
+    "README.md", "REVISION", "deploy.yml", "pyproject.toml", "requirements.txt",
     "requirements-dev.txt", "sync-live.sh",
 }
 
