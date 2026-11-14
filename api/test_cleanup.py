@@ -170,7 +170,7 @@ def test_expired_api_consistent_before_and_after_sweep(tmp_path, monkeypatch, st
         assert history["inputs"] == []
         assert history["image_url"] is None
         for suffix in ("file", "input/0"):
-            assert client.get(f"/api/result/job/{suffix}").status_code == 410
+            assert client.get(f"/api/result/job/{suffix}?user=u").status_code == 410
     assert client.get("/api/result/unknown/file").status_code == 404
 
 

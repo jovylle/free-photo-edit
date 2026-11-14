@@ -97,11 +97,11 @@ def test_running_then_done(client, engine):
     assert running.status_code == 200
     assert running.json()["status"] == "running"
     assert running.json()["image_url"] is None
-    assert client.get(f"/api/result/{job_id}/file").status_code == 404
-    assert server.get_store().balance("run") == 2
+    assert client.get(f"/api/result/{job_id}/file?user=run").status_code == 404
+    assert server.get_store().balance("run") == 4
     engine.release.set()
     _wait_status(client, job_id)
-    output = client.get(f"/api/result/{job_id}/file")
+    output = client.get(f"/api/result/{job_id}/file?user=run")
     assert output.status_code == 200
     assert output.content == PNG
     assert (server.STORAGE / job_id / "output.png").read_bytes() == PNG
@@ -138,7 +138,7 @@ def test_global_slots_full_429_and_reuse(client, engine):
     r = _edit(client, "overflow", "192.0.2.99")
     assert r.status_code == 429, r.text
     assert r.headers["Retry-After"] == "15"
-    assert server.get_store().balance("overflow") == 3
+    assert server.get_store().balance("overflow") == 5
     assert server.get_store().user_jobs("overflow") == []
     assert engine.calls == 6
     engine.release.set()
@@ -159,9 +159,9 @@ def test_engine_failure_refunds_and_reuses_all_slots(client, engine):
         job_id = r.json()["job_id"]
         failed = _wait_status(client, job_id, "failed")
         assert failed["image_url"] is None
-        assert server.get_store().balance(f"fail{i}") == 3
+        assert server.get_store().balance(f"fail{i}") == 5
         assert "boom" in server.get_store().get_job(job_id)["error"]
-        assert client.get(f"/api/result/{job_id}/file").status_code == 404
+        assert client.get(f"/api/result/{job_id}/file?user=fail{i}").status_code == 404
     engine.fail = False
     engine.release.clear()
     reused = [_edit(client, f"retry{i}", f"192.0.2.{i // 3 + 1}") for i in range(6)]
@@ -189,7 +189,7 @@ def test_concurrent_double_submit_ok(client, engine):
         assert not t.is_alive()
     assert sorted(r.status_code for r in results) == [202, 202]
     engine.wait_calls(2)
-    assert server.get_store().balance("race2") == 1
+    assert server.get_store().balance("race2") == 3
     engine.release.set()
     for r in results:
         _wait_status(client, r.json()["job_id"])

@@ -62,7 +62,8 @@ MAX_PROMPT_CHARS = 2000
 ALLOWED_MIME = {"image/jpeg", "image/png", "image/webp"}
 ALLOWED_PRESETS = {"background", "clothes", "restore", "custom"}
 
-FREE_NOTE = "3 free edits per user. Outputs up to 1024x1024."
+FREE_NOTE = "5 free edits a day per user. Outputs up to 1024x1024."
+STARTED_AT = time.time()
 
 @asynccontextmanager
 async def lifespan(app):
@@ -321,20 +322,68 @@ def credits(user: str = Depends(current_user)):
 
 
 @app.get("/api/config")
-def config():
-    return {"turnstile_sitekey": TURNSTILE_SITEKEY or None}
+def config() -> dict[str, str | None]:
+    return {"turnstile_sitekey": TURNSTILE_SITEKEY or None,
+            "revision": _revision()}
+
+
+_REVISION_CACHE: str | None = None
+
+
+def _revision() -> str:
+    """Revision stamped by `homeploy push` after rsync; 'dev' in a local run."""
+    global _REVISION_CACHE
+    if _REVISION_CACHE is not None:
+        return _REVISION_CACHE
+    env = os.environ.get("FREE_PHOTO_EDIT_REVISION_FILE")
+    path = Path(env) if env else (API_DIR.parent / "REVISION")
+    try:
+        _REVISION_CACHE = path.read_text().strip() or "unknown"
+    except OSError:
+        _REVISION_CACHE = "unknown"
+    return _REVISION_CACHE
+
+
+def _prom_label(v: object) -> str:
+    return str(v).replace("\\", "\\\\").replace('"', '\\"')
+
+
+@app.get("/metrics")
+def metrics() -> Response:
+    """Prometheus text format: aggregate counts only — no users, prompts or images."""
+    s = get_store().stats()
+    lines = [
+        "# HELP photoedit_up 1 while the API is serving.",
+        "# TYPE photoedit_up gauge",
+        "photoedit_up 1",
+        "# TYPE photoedit_uptime_seconds gauge",
+        f"photoedit_uptime_seconds {time.time() - STARTED_AT:.0f}",
+        "# TYPE photoedit_users_total gauge",
+        f"photoedit_users_total {s['users']}",
+        "# TYPE photoedit_credits_remaining gauge",
+        f"photoedit_credits_remaining {s['credits']}",
+        "# TYPE photoedit_jobs gauge",
+    ]
+    for key, value in sorted(s.items()):
+        if key.startswith("jobs_"):
+            lines.append(f'photoedit_jobs{{status="{_prom_label(key[5:])}"}} {value}')
+    lines += [
+        "# TYPE photoedit_revision_info gauge",
+        f'photoedit_revision_info{{revision="{_prom_label(_revision())}"}} 1',
+    ]
+    return Response("\n".join(lines) + "\n", media_type="text/plain; version=0.0.4")
 
 
 @app.get("/api/presets")
 def presets():
     return {"presets": [
-        {"id": "background", "label": "🏙 Background",
+        {"id": "background", "label": "Background",
          "hint": "New background from your description."},
-        {"id": "clothes", "label": "👔 Clothes",
+        {"id": "clothes", "label": "Clothes",
          "hint": "Change clothing from your description."},
-        {"id": "restore", "label": "✨ Restore",
+        {"id": "restore", "label": "Restore",
          "hint": "Fix scratches, noise, blur, faded colors."},
-        {"id": "custom", "label": "✏ Custom",
+        {"id": "custom", "label": "Custom",
          "hint": "Free-form instruction (Tagalog/English/Bisaya)."},
     ]}
 
@@ -432,12 +481,12 @@ _INPUT_MIME = {".jpg": "image/jpeg", ".jpeg": "image/jpeg",
 
 
 @app.get("/api/result/{job_id}/input/{index}")
-def result_input(job_id: str, index: int):
+def result_input(job_id: str, index: int, user: str = Depends(current_user)):
     if not 0 <= index < MAX_IMAGES:
         raise HTTPException(404, "input not found")
     store = get_store()
     job = store.get_job(job_id)
-    if job is None:
+    if job is None or job["user"] != user:
         raise HTTPException(404, "unknown job")
     if artifacts_expired(job):
         raise HTTPException(410, "job artifacts expired after seven days")
@@ -467,10 +516,10 @@ def jobs(user: str = Depends(current_user)):
 
 
 @app.get("/api/result/{job_id}/file")
-def result_file(job_id: str):
+def result_file(job_id: str, user: str = Depends(current_user)):
     store = get_store()
     job = store.get_job(job_id)
-    if job is None:
+    if job is None or job["user"] != user:
         raise HTTPException(404, "unknown job")
     if artifacts_expired(job):
         raise HTTPException(410, "job artifacts expired after seven days")

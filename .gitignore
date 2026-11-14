@@ -8,6 +8,7 @@ api/credits.db
 *.pyc
 .DS_Store
 .superpowers/
+.wrangler/
 
 # test artifacts
 .playwright-mcp/
