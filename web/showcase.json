@@ -4,10 +4,5 @@
     "after": "showcase/wedding-after.jpg",
     "preset": "Restore",
     "note": "A damaged wedding photo, cleaned up."
-  },
-  {
-    "image": "showcase/roosters.jpg",
-    "preset": "Background",
-    "note": "Two roosters, placed in a natural habitat."
   }
 ]
