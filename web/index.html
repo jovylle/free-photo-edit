@@ -65,6 +65,13 @@
   details.card summary { cursor:pointer; font:700 var(--step-0)/1.3 var(--font-display) }
   #editAnother { width:100%; background:var(--input); border:0; color:var(--muted); padding:var(--space-xs); cursor:pointer; font:inherit; font-size:var(--step--1); margin-top:var(--space-2xs) }
   #result { display:grid; gap:var(--space-xs) }
+  /* Running state: the wait used to be one muted line with a raw job id. */
+  .run-card { background:var(--input); padding:var(--space-l) var(--space-m); display:grid; justify-items:center; gap:var(--space-2xs); text-align:center }
+  .run-card b { font:700 var(--step-1)/1.3 var(--font-display) }
+  .run-card span.muted { max-width:44ch }
+  .spin { width:30px; height:30px; border:3px solid var(--muted); border-top-color:var(--accent); border-radius:50%; margin-bottom:var(--space-2xs); animation:spin 900ms linear infinite }
+  @keyframes spin { to { transform:rotate(360deg) } }
+  @media (prefers-reduced-motion: reduce) { .spin { animation-duration:3s } }
   #submitBtn { background:var(--accent); border:0; padding:var(--space-xs) var(--space-l); font:700 var(--step-0) var(--font-display); cursor:pointer; color:var(--onaccent) }
   #submitBtn:hover { background:var(--accent-alt) }
   #submitBtn:disabled { opacity:.5; cursor:wait }
@@ -84,7 +91,7 @@
   .job-thumbs img { width:72px; height:72px; object-fit:cover }
   .job-spin { color:var(--accent); font-size:var(--step--1); margin:0 }
   .job-fail { color:var(--err); font-size:var(--step--1); margin:0 }
-  .dl { background:var(--input); border:0; color:var(--link); padding:var(--space-2xs) var(--space-s); font-size:var(--step--1); text-decoration:none; display:inline-flex; align-items:center; justify-content:center; min-height:44px; cursor:pointer; font-family:inherit }
+  .dl { background:var(--input); border:0; color:var(--link); gap:.4em; padding:var(--space-2xs) var(--space-s); font-size:var(--step--1); text-decoration:none; display:inline-flex; align-items:center; justify-content:center; min-height:44px; cursor:pointer; font-family:inherit }
   .dl.solid { background:var(--accent); color:var(--onaccent); font-weight:700 }
   .dl:disabled { opacity:.5; cursor:wait }
   #donate { display:flex; gap:var(--space-2xs); flex-wrap:wrap; align-items:center }
@@ -177,6 +184,6 @@
   <a href="index.html">Home</a> · <a href="about.html">About</a> · <a href="faq.html">FAQ</a> · <a href="privacy.html">Privacy</a> · <a href="terms.html">Terms</a> · <a href="https://ko-fi.com/twe222" target="_blank" rel="noopener">Ko-fi</a>
 </footer>
 <script src="site.js?v=4" defer></script>
-<script src="app.js?v=20261114c"></script>
+<script src="app.js?v=20261114d"></script>
 </body>
 </html>

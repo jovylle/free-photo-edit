@@ -455,6 +455,24 @@
     if (t) { clearInterval(t); timers.delete(jobId); }
   }
 
+  function showRunning() { // prominent "working" state, not a one-line status
+    resultBox.innerHTML = "";
+    const card = document.createElement("div");
+    card.className = "run-card";
+    card.setAttribute("role", "status");
+    const dot = document.createElement("span");
+    dot.className = "spin";
+    dot.setAttribute("aria-hidden", "true");
+    const head = document.createElement("b");
+    head.textContent = "Editing your photo…";
+    const note = document.createElement("span");
+    note.className = "muted";
+    note.textContent = "Usually under a minute. You can close this tab — it will be here when you return.";
+    card.append(dot, head, note);
+    resultBox.appendChild(card);
+    resultBox.classList.remove("hidden");
+  }
+
   function stageResult(j) { // newest result takes the stage under the button
     if (!j || j.status !== "done" || !j.image_url) return;
     resultBox.innerHTML = "";
@@ -475,11 +493,16 @@
       const j = await r.json();
       if (j.status === "done" || j.status === "failed") {
         stopPoll(jobId);
+        runningJobs = Math.max(0, runningJobs - 1);
         await loadHistory();
         stageResult(j);
+        if (j.status !== "done" || j.artifacts_expired) {
+          resultBox.innerHTML = "";
+          resultBox.classList.add("hidden");
+        }
         setStatus(j.artifacts_expired ? "Photos expired after seven days. Upload a photo to edit again."
-                  : j.status === "done" ? "Job " + jobId + " done"
-                                      : "Job " + jobId + " failed — credit refunded.", j.status === "failed");
+                  : j.status === "done" ? "Done — your edited photo is below."
+                                      : "That edit failed — your credit was refunded.", j.status === "failed");
         refreshCredits();
       }
     } catch (e) { /* next tick */ }
@@ -673,6 +696,7 @@
   }
 
   let submitting = false;
+  let runningJobs = 0;
   submitBtn.addEventListener("click", async () => {
     if (submitting || submitBtn.disabled) return;
     if (!files.length) { setStatus("Add a photo first.", true); return; }
@@ -715,12 +739,13 @@
       }
       if (r.status !== 202 || !data.job_id) throw new Error(data.detail || ("edit failed: " + r.status));
       setCredits(data.credits_left);
-      setStatus("Job " + data.job_id + " editing…");
+      runningJobs += 1;
+      setStatus("");
       formBody.classList.add("hidden"); // photo + prompt kept as-is for retry
       editAnother.classList.remove("hidden");
-      resultBox.classList.add("hidden");
-      resultBox.innerHTML = "";
-      await loadHistory();
+      await loadHistory(); // clears the stage; the running card must come after it
+      showRunning();
+      pollOne(data.job_id); // instant engine: replace the card as soon as it is done
       startPoll(data.job_id);
       refreshCredits();
     } catch (e) {
@@ -740,7 +765,13 @@
   editAnother.addEventListener("click", () => {
     editAnother.classList.add("hidden");
     formBody.classList.remove("hidden");
-    submitBtn.disabled = false;
+    if (runningJobs > 0) {
+      submitBtn.disabled = true;
+      setStatus("Your previous edit is still running — it will be here when it's done.");
+    } else {
+      submitBtn.disabled = false;
+      setStatus("");
+    }
   });
 
   try { promptEl.value = localStorage.getItem(PROMPT_KEY) || ""; } catch (e) { /* private mode */ }
