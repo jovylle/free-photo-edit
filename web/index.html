@@ -26,7 +26,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;700&family=Karla:wght@400;500&display=swap">
-<link rel="stylesheet" href="site.css?v=5">
+<link rel="stylesheet" href="site.css?v=6">
 <script>try { document.documentElement.dataset.theme = localStorage.getItem("fpe-theme") === "dark" ? "dark" : "light"; } catch (e) { document.documentElement.dataset.theme = "light"; }</script>
 <style>
   * { box-sizing:border-box }
@@ -44,6 +44,7 @@
   #dropzone .dz-icon { font-size:var(--step-2); line-height:1.3 }
   #dropzone .dz-title { color:var(--ink); font-weight:600; font-size:var(--step-0) }
   #dropzone .dz-sub { font-size:var(--step--1) }
+  .desk-only { white-space:nowrap }
   #dropzone.over { outline:2px solid var(--accent); outline-offset:-2px; color:var(--ink); }
   #thumbs { display:flex; gap:var(--space-2xs); margin-top:var(--space-xs); flex-wrap:wrap; justify-content:center }
   #thumbs img { width:160px; height:160px; object-fit:cover }
@@ -59,12 +60,23 @@
   .preset.active { background:var(--ink); color:var(--bg) }
   .preset.active b { color:var(--bg) }
   #showcaseGrid { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:var(--space-xs) }
-  #showcaseGrid figure { margin:0 }
+  #showcaseGrid figure { margin:0; max-width:520px }
   #showcaseGrid img { width:100%; display:block; background:var(--input) }
   #showcaseGrid figcaption { margin-top:var(--space-3xs); font-size:var(--step--1); color:var(--muted) }
+  #showcaseGrid .pair { display:grid; grid-template-columns:1fr 1fr; gap:var(--space-3xs) }
+  #showcaseGrid .pair > div { position:relative }
+  #showcaseGrid .pair img { aspect-ratio:1/1; object-fit:cover }
+  #showcaseGrid .tag { position:absolute; left:0; bottom:0; background:var(--ink); color:var(--bg); font-size:var(--step--1); padding:2px 6px }
   details.card summary { cursor:pointer; font:700 var(--step-0)/1.3 var(--font-display) }
   #editAnother { width:100%; background:var(--input); border:0; color:var(--muted); padding:var(--space-xs); cursor:pointer; font:inherit; font-size:var(--step--1); margin-top:var(--space-2xs) }
   #result { display:grid; gap:var(--space-xs) }
+  /* Running state: the wait used to be one muted line with a raw job id. */
+  .run-card { background:var(--input); padding:var(--space-l) var(--space-m); display:grid; justify-items:center; gap:var(--space-2xs); text-align:center }
+  .run-card b { font:700 var(--step-1)/1.3 var(--font-display) }
+  .run-card span.muted { max-width:44ch }
+  .spin { width:30px; height:30px; border:3px solid var(--muted); border-top-color:var(--accent); border-radius:50%; margin-bottom:var(--space-2xs); animation:spin 900ms linear infinite }
+  @keyframes spin { to { transform:rotate(360deg) } }
+  @media (prefers-reduced-motion: reduce) { .spin { animation-duration:3s } }
   #submitBtn { background:var(--accent); border:0; padding:var(--space-xs) var(--space-l); font:700 var(--step-0) var(--font-display); cursor:pointer; color:var(--onaccent) }
   #submitBtn:hover { background:var(--accent-alt) }
   #submitBtn:disabled { opacity:.5; cursor:wait }
@@ -82,9 +94,11 @@
   .job-head small { color:var(--muted); font-size:var(--step--1) }
   .job-thumbs { display:flex; gap:var(--space-2xs); flex-wrap:wrap }
   .job-thumbs img { width:72px; height:72px; object-fit:cover }
+  .fix { display:grid; gap:var(--space-2xs); margin-top:var(--space-s) }
+  .fix label { font-size:var(--step--1) }
   .job-spin { color:var(--accent); font-size:var(--step--1); margin:0 }
   .job-fail { color:var(--err); font-size:var(--step--1); margin:0 }
-  .dl { background:var(--input); border:0; color:var(--link); padding:var(--space-2xs) var(--space-s); font-size:var(--step--1); text-decoration:none; display:inline-flex; align-items:center; justify-content:center; min-height:44px; cursor:pointer; font-family:inherit }
+  .dl { background:var(--input); border:0; color:var(--link); gap:.4em; padding:var(--space-2xs) var(--space-s); font-size:var(--step--1); text-decoration:none; display:inline-flex; align-items:center; justify-content:center; min-height:44px; cursor:pointer; font-family:inherit }
   .dl.solid { background:var(--accent); color:var(--onaccent); font-weight:700 }
   .dl:disabled { opacity:.5; cursor:wait }
   #donate { display:flex; gap:var(--space-2xs); flex-wrap:wrap; align-items:center }
@@ -95,14 +109,9 @@
   .pack small { color:var(--muted); font-size:var(--step--1) }
   .pack:disabled { opacity:.5; cursor:wait }
   #buyStatus.error { color:var(--err) }
-  .compare { position:relative; overflow:hidden; background:var(--input) }
-  .compare img { display:block; width:100% }
-  .compare .compare-before { position:absolute; inset:0; height:100%; object-fit:contain; background:var(--input) }
-  .compare-labels { margin:0; text-align:center }
-  .job input[type=range] { width:100%; min-height:44px; accent-color:var(--accent) }
   button, summary { min-height:44px }
-  button:focus-visible, a:focus-visible, #dropzone:focus-visible { outline:3px solid var(--accent); outline-offset:3px }
-  @media (max-width:480px) { header { flex-wrap:wrap; padding:var(--space-s) } header nav { margin-left:0; flex-wrap:wrap } main { padding:0 var(--space-s) var(--space-2xl) } .card { padding:var(--space-m) } #submitBtn { width:100% } }
+  button:focus-visible, a:focus-visible, #dropzone:focus-visible { outline:3px solid var(--link); outline-offset:3px }
+  @media (max-width:480px) { header { flex-wrap:wrap; padding:var(--space-s) } header nav { margin-left:0; flex-wrap:wrap } main { padding:0 var(--space-s) var(--space-2xl) } .card { padding:var(--space-m) } #submitBtn { width:100% } .desk-only { display:none } }
   #adslot { background:var(--input); padding:var(--space-s); text-align:center; color:var(--muted); font-size:var(--step--1) }
 </style>
 </head>
@@ -118,7 +127,7 @@
       <div id="dropzone" tabindex="0" role="button" aria-label="Add up to 5 photos">
         <span class="dz-icon" aria-hidden="true"><svg class="ico"><use href="icons.svg#i-image"></use></svg></span>
         <span class="dz-title">Add photos</span>
-        <span class="dz-sub">Tap to choose, or drop files here</span>
+        <span class="dz-sub">Tap to choose, drop files, or paste <span class="desk-only">with Ctrl+V</span></span>
         <input id="fileInput" class="hidden" type="file" accept="image/jpeg,image/png,image/webp" multiple>
         <div id="thumbs"></div>
       </div>
@@ -176,7 +185,7 @@
 <footer class="site-foot">
   <a href="index.html">Home</a> · <a href="about.html">About</a> · <a href="faq.html">FAQ</a> · <a href="privacy.html">Privacy</a> · <a href="terms.html">Terms</a> · <a href="https://ko-fi.com/twe222" target="_blank" rel="noopener">Ko-fi</a>
 </footer>
-<script src="site.js?v=3" defer></script>
-<script src="app.js?v=20261114b"></script>
+<script src="site.js?v=4" defer></script>
+<script src="app.js?v=20261115b"></script>
 </body>
 </html>

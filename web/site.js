@@ -4,6 +4,8 @@
   const btn = document.getElementById("themeBtn");
   const paint = () => {
     const dark = document.documentElement.dataset.theme === "dark";
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) meta.setAttribute("content", dark ? "#1a1a20" : "#eeedf5");
     if (btn) btn.innerHTML =
       '<svg class="ico" aria-hidden="true"><use href="icons.svg#i-' + (dark ? "sun" : "moon") +
       '"></use></svg> ' + (dark ? "Light" : "Dark");

@@ -149,6 +149,11 @@
       minimumFractionDigits: 2, maximumFractionDigits: 2});
   }
 
+  let packCount = 0;
+  function packsAvailable() {
+    return packCount > 0;
+  }
+
   function showBuyCard() {
     buyCard.scrollIntoView({ behavior: "smooth", block: "center" });
     const first = packsBox.querySelector("button");
@@ -193,14 +198,32 @@
     } catch (e) { /* no showcase */ }
     if (!Array.isArray(items) || !items.length) return;
     box.innerHTML = "";
-    items.forEach((it) => {
-      const fig = document.createElement("figure");
+    const shot = (src, alt) => {
       const img = document.createElement("img");
       img.loading = "lazy";
       img.decoding = "async";
-      img.src = it.image;
-      img.alt = it.note || (it.preset ? it.preset + " edit" : "Edited photo");
-      fig.appendChild(img);
+      img.src = src;
+      img.alt = alt;
+      return img;
+    };
+    items.forEach((it) => {
+      const fig = document.createElement("figure");
+      const label = it.preset ? it.preset + " edit" : "Edited photo";
+      if (it.before && it.after) { // paired before/after, labelled
+        const pair = document.createElement("div");
+        pair.className = "pair";
+        [["Before", it.before], ["After", it.after]].forEach(([tag, src]) => {
+          const cell = document.createElement("div");
+          const mark = document.createElement("span");
+          mark.className = "tag";
+          mark.textContent = tag;
+          cell.append(shot(src, tag + " — " + label), mark);
+          pair.appendChild(cell);
+        });
+        fig.appendChild(pair);
+      } else {
+        fig.appendChild(shot(it.image, it.note || label));
+      }
       const cap = document.createElement("figcaption");
       cap.textContent = [it.preset, it.note].filter(Boolean).join(" — ");
       fig.appendChild(cap);
@@ -215,6 +238,7 @@
       const r = await fetch(api("/api/packs"));
       if (r.ok) packs = (await r.json()).packs;
     } catch (e) { /* offline: keep the note */ }
+    packCount = (packs || []).length;
     if (!packs || !packs.length) {
       packsBox.innerHTML = "<p class='muted'>Edit packs are unavailable right now.</p>";
       buyCard.style.display = "none"; // unconfigured: no dead offer on the page
@@ -393,13 +417,19 @@
   function addFiles(incoming) {
     const added = Array.from(incoming);
     if (!added.length) return;
-    if (files.length + added.length > MAX_IMAGES) { setStatus("Rejected: maximum 5 photos.", true); return; }
-    if (added.some((f) => !OK_TYPES.includes(f.type))) { setStatus("Rejected: only jpeg/png/webp.", true); return; }
-    if (added.some((f) => !f.size || f.size > MAX_BYTES)) { setStatus("Rejected: empty photo or over 5MB.", true); return; }
-    files.push(...added);
+    const room = MAX_IMAGES - files.length;
+    if (room <= 0) { setStatus("Rejected: maximum 5 photos.", true); return; }
+    // A picker selection larger than the remaining room keeps the first ones
+    // instead of throwing the whole selection away.
+    const over = added.length > room;
+    const take = over ? added.slice(0, room) : added;
+    if (take.some((f) => !OK_TYPES.includes(f.type))) { setStatus("Rejected: only jpeg/png/webp.", true); return; }
+    if (take.some((f) => !f.size || f.size > MAX_BYTES)) { setStatus("Rejected: empty photo or over 5MB.", true); return; }
+    files.push(...take);
     renderThumbs();
     saveDraft();
-    setStatus(files.length + (files.length === 1 ? " photo ready." : " photos ready."));
+    if (over) setStatus("Kept 5 photos — maximum is 5 per edit.", true);
+    else setStatus(files.length + (files.length === 1 ? " photo ready." : " photos ready."));
   }
 
   dropzone.addEventListener("click", (e) => {
@@ -443,6 +473,24 @@
     if (t) { clearInterval(t); timers.delete(jobId); }
   }
 
+  function showRunning() { // prominent "working" state, not a one-line status
+    resultBox.innerHTML = "";
+    const card = document.createElement("div");
+    card.className = "run-card";
+    card.setAttribute("role", "status");
+    const dot = document.createElement("span");
+    dot.className = "spin";
+    dot.setAttribute("aria-hidden", "true");
+    const head = document.createElement("b");
+    head.textContent = "Editing your photo…";
+    const note = document.createElement("span");
+    note.className = "muted";
+    note.textContent = "Usually under a minute. You can close this tab — it will be here when you return.";
+    card.append(dot, head, note);
+    resultBox.appendChild(card);
+    resultBox.classList.remove("hidden");
+  }
+
   function stageResult(j) { // newest result takes the stage under the button
     if (!j || j.status !== "done" || !j.image_url) return;
     resultBox.innerHTML = "";
@@ -463,11 +511,16 @@
       const j = await r.json();
       if (j.status === "done" || j.status === "failed") {
         stopPoll(jobId);
+        runningJobs = Math.max(0, runningJobs - 1);
         await loadHistory();
         stageResult(j);
+        if (j.status !== "done" || j.artifacts_expired) {
+          resultBox.innerHTML = "";
+          resultBox.classList.add("hidden");
+        }
         setStatus(j.artifacts_expired ? "Photos expired after seven days. Upload a photo to edit again."
-                  : j.status === "done" ? "Job " + jobId + " done"
-                                      : "Job " + jobId + " failed — credit refunded.", j.status === "failed");
+                  : j.status === "done" ? "Done — your edited photo is below."
+                                      : "That edit failed — your credit was refunded.", j.status === "failed");
         refreshCredits();
       }
     } catch (e) { /* next tick */ }
@@ -487,6 +540,48 @@
   // Share blobs are cached per job and only prefetched for the card on the
   // stage; history cards must not pull 30 full PNGs on first paint.
   const shareBlobs = new Map();
+  const creditBlobs = new Map();
+
+  function saveBlob(blob, name) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+  }
+
+  // Link posts get a person flagged in groups, so the attribution lives IN the
+  // image: a quiet footer strip added under the photo, never a URL in the text.
+  async function creditedBlob(jobId, blob) {
+    if (creditBlobs.has(jobId)) return creditBlobs.get(jobId);
+    const img = await createImageBitmap(blob);
+    const pad = Math.round(Math.max(24, Math.min(img.width, img.height) * 0.045));
+    const bar = Math.round(Math.max(52, img.height * 0.085));
+    const size = Math.round(bar * 0.33);
+    const canvas = document.createElement("canvas");
+    canvas.width = img.width;
+    canvas.height = img.height + bar;
+    const ctx = canvas.getContext("2d");
+    ctx.fillStyle = "#eeedf5";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(img, 0, 0);
+    ctx.textBaseline = "middle";
+    ctx.fillStyle = "#3d3c43";
+    ctx.font = '700 ' + size + 'px Manrope, system-ui, sans-serif';
+    ctx.textAlign = "left";
+    ctx.fillText("freephoto.uft1.com", pad, img.height + bar / 2);
+    ctx.fillStyle = "#6e6d78";
+    ctx.font = '500 ' + Math.round(size * 0.82) + 'px Karla, system-ui, sans-serif';
+    ctx.textAlign = "right";
+    ctx.fillText("free photo edit", canvas.width - pad, img.height + bar / 2);
+    const out = await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
+    if (!out) throw new Error("could not build the image");
+    creditBlobs.set(jobId, out);
+    return out;
+  }
   function prefetchShare(j) {
     if (!j.image_url || shareBlobs.has(j.job_id)) return;
     shareBlobs.set(j.job_id, fetch(resultUrl(j.image_url))
@@ -525,34 +620,14 @@
     card.appendChild(inRow);
 
     if (j.status === "done" && j.image_url) {
+      // Inputs stay above, result below. A slider overlaid them, which made it
+      // unclear which photo was the edit.
       const after = document.createElement("img");
       after.alt = "edited result";
       after.loading = "lazy";
-      after.style.cssText = "width:100%;height:auto;border-radius:10px;border:0;background:var(--bg)";
+      after.style.cssText = "width:100%;height:auto;border-radius:10px;border:0;background:var(--bg);margin-top:var(--space-2xs)";
       after.src = resultUrl(j.image_url);
-      const compare = document.createElement("div");
-      compare.className = "compare";
-      const before = document.createElement("img");
-      before.className = "compare-before";
-      before.alt = "Original photo";
-      before.src = resultUrl((j.inputs || [])[0] || "/api/result/" + j.job_id + "/input/0");
-      const range = document.createElement("input");
-      range.type = "range";
-      range.min = "0"; range.max = "100"; range.value = "50";
-      range.setAttribute("aria-label", "Compare original and edited photo");
-      const update = () => {
-        before.style.clipPath = "inset(0 " + (100 - range.value) + "% 0 0)";
-        range.setAttribute("aria-valuetext", range.value + "% original photo");
-      };
-      range.addEventListener("input", update);
-      update();
-      const labels = document.createElement("p");
-      labels.className = "compare-labels muted";
-      labels.textContent = "Original ← slide to compare → Edited";
-      before.onerror = () => { before.remove(); range.hidden = true; labels.textContent = "Original unavailable — edited photo shown."; };
-      compare.append(after, before);
-      inRow.remove();
-      card.append(compare, labels, range);
+      card.appendChild(after);
       const row = document.createElement("div");
       row.className = "row";
       const dl = document.createElement("button");
@@ -566,15 +641,7 @@
         try {
           const r = await fetch(resultUrl(j.image_url));
           if (!r.ok) throw new Error("download " + r.status);
-          const blob = await r.blob();
-          const url = URL.createObjectURL(blob);
-          const a = document.createElement("a");
-          a.href = url;
-          a.download = "free-photo-edit-" + j.job_id + ".png";
-          document.body.appendChild(a);
-          a.click();
-          a.remove();
-          setTimeout(() => URL.revokeObjectURL(url), 5000);
+          saveBlob(await r.blob(), "free-photo-edit-" + j.job_id + ".png");
         } catch (e) {
           setStatus("Download failed: " + e.message, true);
         } finally {
@@ -590,36 +657,131 @@
       sh.className = "dl";
       sh.innerHTML = ico("i-share") + " Share";
       sh.onclick = async () => {
-        const text = "Edited with Free Photo Edit — libre, 5 free edits a day, walang account. " + location.origin + "/";
+        sh.disabled = true;
+        const old = sh.innerHTML;
+        sh.innerHTML = ico("i-clock") + " Preparing…";
         try {
-          let blob = null;
-          try {
-            blob = await (shareBlobs.get(j.job_id)
-              || fetch(resultUrl(j.image_url)).then((r) => (r.ok ? r.blob() : null)));
-          } catch (e) { /* fall through to text share */ }
-          if (blob) {
-            const file = new File([blob], "free-photo-edit.png", { type: "image/png" });
-            if (navigator.canShare && navigator.canShare({ files: [file] })) {
-              await navigator.share({ files: [file], text });
-              return;
-            }
-          }
-          if (navigator.share) {
-            await navigator.share({ text, url: location.origin + "/" });
+          const blob = await (shareBlobs.get(j.job_id)
+            || fetch(resultUrl(j.image_url)).then((r) => (r.ok ? r.blob() : null)));
+          if (!blob) throw new Error("could not load the photo");
+          await document.fonts.ready.catch(() => {}); // footer text uses the site fonts
+          const shared = await creditedBlob(j.job_id, blob);
+          const name = "free-photo-edit-" + j.job_id + ".png";
+          const file = new File([shared], name, { type: "image/png" });
+          if (navigator.canShare && navigator.canShare({ files: [file] })) {
+            // Some desktops report canShare(files) but never settle the share
+            // promise, which used to leave the button stuck on "Preparing…".
+            await Promise.race([
+              navigator.share({ files: [file], text: "Edited with Free Photo Edit" }),
+              new Promise((_, reject) => setTimeout(
+                () => reject(Object.assign(new Error("share sheet did not open"), { name: "TimeoutError" })),
+                15000)),
+            ]);
             return;
           }
-          throw new Error("no share sheet");
+          // No share sheet (desktop, in-app webview): save the credited image
+          // instead of posting a link — links are what get flagged in groups.
+          saveBlob(shared, name);
+          setStatus("Saved the shareable image — it carries a small credit footer.");
         } catch (e) {
           if (e.name === "AbortError") return; // user closed the sheet
-          // No usable share path (desktop, in-app webview, lost activation):
-          // save the file and leave the caption on the clipboard.
-          dl.click();
-          try { await navigator.clipboard.writeText(text); } catch (_) { /* insecure origin */ }
-          setStatus("Download started — if no file appears, long-press the photo to save it.");
+          if (e.name === "TimeoutError") {
+            saveBlob(await creditedBlob(j.job_id, await (shareBlobs.get(j.job_id)
+              || fetch(resultUrl(j.image_url)).then((r) => r.blob()))), name);
+            setStatus("Share sheet did not open — the image was saved instead.");
+            return;
+          }
+          setStatus("Could not share: " + e.message, true);
+        } finally {
+          sh.disabled = false;
+          sh.innerHTML = old;
         }
       };
       row.appendChild(sh);
+      // Voluntary correction: re-edit the finished photo from plain text. No
+      // chat model — the user's sentence goes straight to the engine, and the
+      // result above is the only input.
+      const fix = document.createElement("button");
+      fix.type = "button";
+      fix.className = "dl";
+      fix.innerHTML = ico("i-pencil") + " Need a correction?";
+      const panel = document.createElement("div");
+      panel.className = "fix hidden";
+      const fixId = "fix-" + j.job_id;
+      const fixLabel = document.createElement("label");
+      fixLabel.className = "muted";
+      fixLabel.htmlFor = fixId;
+      fixLabel.textContent = "What should change? The photo above is the input, and this uses one edit.";
+      const ta = document.createElement("textarea");
+      ta.id = fixId;
+      ta.rows = 2;
+      ta.maxLength = 2000;
+      ta.placeholder = "e.g. make me look like I'm in Paris";
+      const send = document.createElement("button");
+      send.type = "button";
+      send.className = "dl solid";
+      send.textContent = "Send correction";
+      const drop = document.createElement("button");
+      drop.type = "button";
+      drop.className = "dl";
+      drop.textContent = "Cancel";
+      const fixRow = document.createElement("div");
+      fixRow.className = "row";
+      fixRow.append(send, drop);
+      panel.append(fixLabel, ta, fixRow);
+      row.appendChild(fix);
+      fix.onclick = () => { panel.classList.remove("hidden"); ta.focus(); };
+      drop.onclick = () => { panel.classList.add("hidden"); ta.value = ""; };
+      send.onclick = async () => {
+        if (submitting) return;
+        const text = ta.value.trim();
+        if (!text) { setStatus("Describe the correction first.", true); ta.focus(); return; }
+        submitting = true;
+        send.disabled = true;
+        send.textContent = "Sending…";
+        try {
+          // shareBlobs already holds the result bytes for the share button, so
+          // the common case costs no request.
+          const blob = await (shareBlobs.get(j.job_id)
+            || fetch(resultUrl(j.image_url)).then((r) => (r.ok ? r.blob() : null)));
+          if (!blob) throw new Error("could not load the photo");
+          const fd = new FormData();
+          fd.append("image", new File([blob], "correction.png", { type: blob.type || "image/png" }));
+          fd.append("prompt", text);
+          fd.append("preset", "custom");
+          fd.append("user", user);
+          fd.append("cf-turnstile-response", tsToken());
+          const r = await fetch(api("/api/edit"), { method: "POST", body: fd });
+          tsReset();
+          const data = await r.json().catch(() => ({}));
+          const problem = editProblem(r, data);
+          if (problem) { setStatus(problem, true); return; }
+          if (r.status !== 202 || !data.job_id) throw new Error(data.detail || ("edit failed: " + r.status));
+          setCredits(data.credits_left);
+          runningJobs += 1;
+          setStatus("Correction sent — editing…");
+          panel.classList.add("hidden");
+          ta.value = "";
+          await loadHistory();
+          showRunning();
+          pollOne(data.job_id);
+          startPoll(data.job_id);
+          refreshCredits();
+        } catch (e) {
+          tsReset();
+          setStatus("Correction failed: " + e.message, true);
+        } finally {
+          submitting = false;
+          send.disabled = false;
+          send.textContent = "Send correction";
+        }
+      };
       card.appendChild(row);
+      card.appendChild(panel);
+      const note = document.createElement("p");
+      note.className = "muted";
+      note.textContent = "Share saves a copy with a small credit footer. Download is the clean photo, no text added.";
+      card.appendChild(note);
     } else if (j.status === "failed") {
       const p = document.createElement("p");
       p.className = "job-fail";
@@ -660,8 +822,31 @@
     }
   }
 
+  // One place for the /api/edit failure copy, so the correction panel and the
+  // main submit button can never drift apart.
+  function editProblem(r, data) {
+    const d = data.detail;
+    if (r.status === 402) {
+      setCredits(0);
+      if (packsAvailable()) {
+        showBuyCard();
+        return (d || "Out of edits") + " — pick a pack below to keep going.";
+      }
+      return (d || "Out of edits") + " — your free edits reset tomorrow.";
+    }
+    if (r.status === 403) return d || "Bot check didn't finish — tap Edit photo again.";
+    if (r.status === 503) return d || "Today's free budget is used up — try again tomorrow.";
+    if (r.status === 429) {
+      return (d || "Server busy") + ". Retry after "
+        + (r.headers.get("Retry-After") || "10") + " seconds.";
+    }
+    return null;
+  }
+
+  let submitting = false;
+  let runningJobs = 0;
   submitBtn.addEventListener("click", async () => {
-    if (submitBtn.disabled) return;
+    if (submitting || submitBtn.disabled) return;
     if (!files.length) { setStatus("Add a photo first.", true); return; }
     const prompt = promptEl.value.trim();
     if (!prompt && activePreset !== "restore") { setStatus("Describe what you want first.", true); return; }
@@ -671,38 +856,24 @@
     fd.append("preset", activePreset);
     fd.append("user", user);
     fd.append("cf-turnstile-response", tsToken());
+    submitting = true;
     submitBtn.disabled = true;
     setStatus("Sending photo…");
     try {
       const r = await fetch(api("/api/edit"), { method: "POST", body: fd });
       tsReset(); // single-use token: fresh widget state for any retry
       const data = await r.json().catch(() => ({}));
-      if (r.status === 402) {
-        setCredits(0);
-        setStatus((data.detail || "Out of edits") + " — pick a pack below to keep going.", true);
-        showBuyCard();
-        return;
-      }
-      if (r.status === 403) {
-        setStatus(data.detail || "Bot check didn't finish — tap Edit photo again.", true);
-        return;
-      }
-      if (r.status === 503) {
-        setStatus(data.detail || "Today's free budget is used up — try again tomorrow.", true);
-        return;
-      }
-      if (r.status === 429) {
-        setStatus((data.detail || "Server busy") + ". Retry after " + (r.headers.get("Retry-After") || "10") + " seconds.", true);
-        return;
-      }
+      const problem = editProblem(r, data);
+      if (problem) { setStatus(problem, true); return; }
       if (r.status !== 202 || !data.job_id) throw new Error(data.detail || ("edit failed: " + r.status));
       setCredits(data.credits_left);
-      setStatus("Job " + data.job_id + " editing…");
+      runningJobs += 1;
+      setStatus("");
       formBody.classList.add("hidden"); // photo + prompt kept as-is for retry
       editAnother.classList.remove("hidden");
-      resultBox.classList.add("hidden");
-      resultBox.innerHTML = "";
-      await loadHistory();
+      await loadHistory(); // clears the stage; the running card must come after it
+      showRunning();
+      pollOne(data.job_id); // instant engine: replace the card as soon as it is done
       startPoll(data.job_id);
       refreshCredits();
     } catch (e) {
@@ -711,13 +882,24 @@
       loadHistory();
       refreshCredits();
     } finally {
-      submitBtn.disabled = false;
+      submitting = false;
+      // On success the form is hidden behind "Edit another photo…", which
+      // re-enables the button; keeping it disabled here closes the window where
+      // a second click started a second job and spent another credit.
+      if (!formBody.classList.contains("hidden")) submitBtn.disabled = false;
     }
   });
 
   editAnother.addEventListener("click", () => {
     editAnother.classList.add("hidden");
     formBody.classList.remove("hidden");
+    if (runningJobs > 0) {
+      submitBtn.disabled = true;
+      setStatus("Your previous edit is still running — it will be here when it's done.");
+    } else {
+      submitBtn.disabled = false;
+      setStatus("");
+    }
   });
 
   try { promptEl.value = localStorage.getItem(PROMPT_KEY) || ""; } catch (e) { /* private mode */ }
