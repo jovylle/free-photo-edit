@@ -149,6 +149,11 @@
       minimumFractionDigits: 2, maximumFractionDigits: 2});
   }
 
+  let packCount = 0;
+  function packsAvailable() {
+    return packCount > 0;
+  }
+
   function showBuyCard() {
     buyCard.scrollIntoView({ behavior: "smooth", block: "center" });
     const first = packsBox.querySelector("button");
@@ -215,6 +220,7 @@
       const r = await fetch(api("/api/packs"));
       if (r.ok) packs = (await r.json()).packs;
     } catch (e) { /* offline: keep the note */ }
+    packCount = (packs || []).length;
     if (!packs || !packs.length) {
       packsBox.innerHTML = "<p class='muted'>Edit packs are unavailable right now.</p>";
       buyCard.style.display = "none"; // unconfigured: no dead offer on the page
@@ -393,13 +399,19 @@
   function addFiles(incoming) {
     const added = Array.from(incoming);
     if (!added.length) return;
-    if (files.length + added.length > MAX_IMAGES) { setStatus("Rejected: maximum 5 photos.", true); return; }
-    if (added.some((f) => !OK_TYPES.includes(f.type))) { setStatus("Rejected: only jpeg/png/webp.", true); return; }
-    if (added.some((f) => !f.size || f.size > MAX_BYTES)) { setStatus("Rejected: empty photo or over 5MB.", true); return; }
-    files.push(...added);
+    const room = MAX_IMAGES - files.length;
+    if (room <= 0) { setStatus("Rejected: maximum 5 photos.", true); return; }
+    // A picker selection larger than the remaining room keeps the first ones
+    // instead of throwing the whole selection away.
+    const over = added.length > room;
+    const take = over ? added.slice(0, room) : added;
+    if (take.some((f) => !OK_TYPES.includes(f.type))) { setStatus("Rejected: only jpeg/png/webp.", true); return; }
+    if (take.some((f) => !f.size || f.size > MAX_BYTES)) { setStatus("Rejected: empty photo or over 5MB.", true); return; }
+    files.push(...take);
     renderThumbs();
     saveDraft();
-    setStatus(files.length + (files.length === 1 ? " photo ready." : " photos ready."));
+    if (over) setStatus("Kept 5 photos — maximum is 5 per edit.", true);
+    else setStatus(files.length + (files.length === 1 ? " photo ready." : " photos ready."));
   }
 
   dropzone.addEventListener("click", (e) => {
@@ -660,8 +672,9 @@
     }
   }
 
+  let submitting = false;
   submitBtn.addEventListener("click", async () => {
-    if (submitBtn.disabled) return;
+    if (submitting || submitBtn.disabled) return;
     if (!files.length) { setStatus("Add a photo first.", true); return; }
     const prompt = promptEl.value.trim();
     if (!prompt && activePreset !== "restore") { setStatus("Describe what you want first.", true); return; }
@@ -671,6 +684,7 @@
     fd.append("preset", activePreset);
     fd.append("user", user);
     fd.append("cf-turnstile-response", tsToken());
+    submitting = true;
     submitBtn.disabled = true;
     setStatus("Sending photo…");
     try {
@@ -679,8 +693,12 @@
       const data = await r.json().catch(() => ({}));
       if (r.status === 402) {
         setCredits(0);
-        setStatus((data.detail || "Out of edits") + " — pick a pack below to keep going.", true);
-        showBuyCard();
+        if (packsAvailable()) {
+          setStatus((data.detail || "Out of edits") + " — pick a pack below to keep going.", true);
+          showBuyCard();
+        } else {
+          setStatus((data.detail || "Out of edits") + " — your free edits reset tomorrow.", true);
+        }
         return;
       }
       if (r.status === 403) {
@@ -711,13 +729,18 @@
       loadHistory();
       refreshCredits();
     } finally {
-      submitBtn.disabled = false;
+      submitting = false;
+      // On success the form is hidden behind "Edit another photo…", which
+      // re-enables the button; keeping it disabled here closes the window where
+      // a second click started a second job and spent another credit.
+      if (!formBody.classList.contains("hidden")) submitBtn.disabled = false;
     }
   });
 
   editAnother.addEventListener("click", () => {
     editAnother.classList.add("hidden");
     formBody.classList.remove("hidden");
+    submitBtn.disabled = false;
   });
 
   try { promptEl.value = localStorage.getItem(PROMPT_KEY) || ""; } catch (e) { /* private mode */ }
