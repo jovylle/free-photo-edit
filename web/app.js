@@ -698,7 +698,86 @@
         }
       };
       row.appendChild(sh);
+      // Voluntary correction: re-edit the finished photo from plain text. No
+      // chat model — the user's sentence goes straight to the engine, and the
+      // result above is the only input.
+      const fix = document.createElement("button");
+      fix.type = "button";
+      fix.className = "dl";
+      fix.innerHTML = ico("i-pencil") + " Need a correction?";
+      const panel = document.createElement("div");
+      panel.className = "fix hidden";
+      const fixId = "fix-" + j.job_id;
+      const fixLabel = document.createElement("label");
+      fixLabel.className = "muted";
+      fixLabel.htmlFor = fixId;
+      fixLabel.textContent = "What should change? The photo above is the input, and this uses one edit.";
+      const ta = document.createElement("textarea");
+      ta.id = fixId;
+      ta.rows = 2;
+      ta.maxLength = 2000;
+      ta.placeholder = "e.g. make me look like I'm in Paris";
+      const send = document.createElement("button");
+      send.type = "button";
+      send.className = "dl solid";
+      send.textContent = "Send correction";
+      const drop = document.createElement("button");
+      drop.type = "button";
+      drop.className = "dl";
+      drop.textContent = "Cancel";
+      const fixRow = document.createElement("div");
+      fixRow.className = "row";
+      fixRow.append(send, drop);
+      panel.append(fixLabel, ta, fixRow);
+      row.appendChild(fix);
+      fix.onclick = () => { panel.classList.remove("hidden"); ta.focus(); };
+      drop.onclick = () => { panel.classList.add("hidden"); ta.value = ""; };
+      send.onclick = async () => {
+        if (submitting) return;
+        const text = ta.value.trim();
+        if (!text) { setStatus("Describe the correction first.", true); ta.focus(); return; }
+        submitting = true;
+        send.disabled = true;
+        send.textContent = "Sending…";
+        try {
+          // shareBlobs already holds the result bytes for the share button, so
+          // the common case costs no request.
+          const blob = await (shareBlobs.get(j.job_id)
+            || fetch(resultUrl(j.image_url)).then((r) => (r.ok ? r.blob() : null)));
+          if (!blob) throw new Error("could not load the photo");
+          const fd = new FormData();
+          fd.append("image", new File([blob], "correction.png", { type: blob.type || "image/png" }));
+          fd.append("prompt", text);
+          fd.append("preset", "custom");
+          fd.append("user", user);
+          fd.append("cf-turnstile-response", tsToken());
+          const r = await fetch(api("/api/edit"), { method: "POST", body: fd });
+          tsReset();
+          const data = await r.json().catch(() => ({}));
+          const problem = editProblem(r, data);
+          if (problem) { setStatus(problem, true); return; }
+          if (r.status !== 202 || !data.job_id) throw new Error(data.detail || ("edit failed: " + r.status));
+          setCredits(data.credits_left);
+          runningJobs += 1;
+          setStatus("Correction sent — editing…");
+          panel.classList.add("hidden");
+          ta.value = "";
+          await loadHistory();
+          showRunning();
+          pollOne(data.job_id);
+          startPoll(data.job_id);
+          refreshCredits();
+        } catch (e) {
+          tsReset();
+          setStatus("Correction failed: " + e.message, true);
+        } finally {
+          submitting = false;
+          send.disabled = false;
+          send.textContent = "Send correction";
+        }
+      };
       card.appendChild(row);
+      card.appendChild(panel);
       const note = document.createElement("p");
       note.className = "muted";
       note.textContent = "Share saves a copy with a small credit footer. Download is the clean photo, no text added.";
@@ -743,6 +822,27 @@
     }
   }
 
+  // One place for the /api/edit failure copy, so the correction panel and the
+  // main submit button can never drift apart.
+  function editProblem(r, data) {
+    const d = data.detail;
+    if (r.status === 402) {
+      setCredits(0);
+      if (packsAvailable()) {
+        showBuyCard();
+        return (d || "Out of edits") + " — pick a pack below to keep going.";
+      }
+      return (d || "Out of edits") + " — your free edits reset tomorrow.";
+    }
+    if (r.status === 403) return d || "Bot check didn't finish — tap Edit photo again.";
+    if (r.status === 503) return d || "Today's free budget is used up — try again tomorrow.";
+    if (r.status === 429) {
+      return (d || "Server busy") + ". Retry after "
+        + (r.headers.get("Retry-After") || "10") + " seconds.";
+    }
+    return null;
+  }
+
   let submitting = false;
   let runningJobs = 0;
   submitBtn.addEventListener("click", async () => {
@@ -763,28 +863,8 @@
       const r = await fetch(api("/api/edit"), { method: "POST", body: fd });
       tsReset(); // single-use token: fresh widget state for any retry
       const data = await r.json().catch(() => ({}));
-      if (r.status === 402) {
-        setCredits(0);
-        if (packsAvailable()) {
-          setStatus((data.detail || "Out of edits") + " — pick a pack below to keep going.", true);
-          showBuyCard();
-        } else {
-          setStatus((data.detail || "Out of edits") + " — your free edits reset tomorrow.", true);
-        }
-        return;
-      }
-      if (r.status === 403) {
-        setStatus(data.detail || "Bot check didn't finish — tap Edit photo again.", true);
-        return;
-      }
-      if (r.status === 503) {
-        setStatus(data.detail || "Today's free budget is used up — try again tomorrow.", true);
-        return;
-      }
-      if (r.status === 429) {
-        setStatus((data.detail || "Server busy") + ". Retry after " + (r.headers.get("Retry-After") || "10") + " seconds.", true);
-        return;
-      }
+      const problem = editProblem(r, data);
+      if (problem) { setStatus(problem, true); return; }
       if (r.status !== 202 || !data.job_id) throw new Error(data.detail || ("edit failed: " + r.status));
       setCredits(data.credits_left);
       runningJobs += 1;
