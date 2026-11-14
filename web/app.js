@@ -1,8 +1,8 @@
-/* Free Photo Edit — 1-photo self-serve UI. No framework, no build step.
+/* Free Photo Edit — multi-photo self-serve UI. No framework, no build step.
  * Backend contract (same-origin /api/* only — no keys in browser):
  *   GET  /api/config -> {turnstile_sitekey} (null = bot check off, dev)
  *   GET  /api/presets -> {presets: [{id,label,hint}]}
- *   POST /api/edit  multipart(image x1, prompt, preset, user,
+ *   POST /api/edit  multipart(image x1–5, prompt, preset, user,
  *     cf-turnstile-response)
  *     -> 202 {job_id, status:running, credits_left} | 400 validation
  *        | 402 out of credits / IP cap | 403 bot check | 429 rate limit
@@ -12,11 +12,17 @@
  *   GET  /api/result/{id}/input/0 -> stored input thumb
  *   GET  /api/jobs?user= -> own history, newest-first
  *   GET  /api/credits?user= -> {credits_left}
+ *   GET  /api/packs -> {packs: [{id,label,price,credits}]} (price = centavos)
+ *   POST /api/checkout {pack, user} -> {checkout_url, session_id}
  */
 (() => {
   "use strict";
-  const MAX_BYTES = 5 * 1024 * 1024;
+  const MAX_BYTES = 5 * 1024 * 1024, MAX_IMAGES = 5;
   const OK_TYPES = ["image/jpeg", "image/png", "image/webp"];
+  // Same-origin by default; a deployed static frontend sets meta[name=api-base].
+  const API_BASE = (document.querySelector('meta[name="api-base"]')?.content || "").replace(/\/+$/, "");
+  const api = (path) => API_BASE + path;
+
   const USER_KEY = "freephotoedit_user";
   const PROMPT_KEY = "freephotoedit_prompt";
   const PRESET_KEY = "freephotoedit_preset";
@@ -28,18 +34,24 @@
         submitBtn = $("submitBtn"), statusEl = $("status"),
         creditsBadge = $("creditsBadge"), historyEl = $("history"),
         formBody = $("formBody"), editAnother = $("editAnother"),
-        resultBox = $("result"), histCount = $("histCount");
+        resultBox = $("result"), histCount = $("histCount"),
+        packsBox = $("packs"), buyStatus = $("buyStatus"), buyCard = $("buyCard"),
+        buyEmail = $("buyEmail");
 
-  let file = null;
+  let files = [];
+  let draftChanged = false;
+  let thumbUrls = [];
+  let draftWrites = Promise.resolve();
   let activePreset = "custom";
 
   const TS_ACTION = "edit";
   let tsWidgetId = null; // explicit render id (page stays alive: reset per try)
 
-  let user = localStorage.getItem(USER_KEY);
+  let user;
+  try { user = localStorage.getItem(USER_KEY); } catch (e) { /* private mode */ }
   if (!user) {
     user = "u-" + Math.random().toString(36).slice(2, 10);
-    localStorage.setItem(USER_KEY, user);
+    try { localStorage.setItem(USER_KEY, user); } catch (e) { /* tab-only history */ }
   }
   const timers = new Map();
 
@@ -51,8 +63,17 @@
     restore: { label: "Detail (optional — what to fix)",
                ph: "e.g. fix scratches, ayusin ang kulay" },
     custom: { label: "Instruction (required)",
-              ph: "e.g. gawing formal ID-style portrait, plain background" },
+              ph: "TL: Gawing formal ang damit. EN: Make the clothes formal. Bisaya: Himog pormal ang sinina." },
   };
+
+  // Inline icons from icons.svg — the site uses no emoji.
+  const PRESET_ICONS = { background: "i-landscape", clothes: "i-shirt", restore: "i-sparkles", custom: "i-pencil" };
+  function ico(name) {
+    return '<svg class="ico" aria-hidden="true"><use href="icons.svg#' + name + '"></use></svg>';
+  }
+  function plain(text) {
+    return String(text || "").replace(/[\p{Extended_Pictographic}\uFE0F]/gu, "").trim();
+  }
 
   const uq = "?user=" + encodeURIComponent(user);
 
@@ -62,13 +83,13 @@
   }
 
   function setCredits(n) {
-    creditsBadge.textContent = "credits left: " + (n == null ? "…" : n);
+    creditsBadge.textContent = n == null ? "free edits: …" : n + (n === 1 ? " free edit left" : " free edits left");
   }
 
   async function initTurnstile() {
     let sitekey = null;
     try {
-      const r = await fetch("/api/config");
+      const r = await fetch(api("/api/config"));
       if (r.ok) sitekey = (await r.json()).turnstile_sitekey || null;
     } catch (e) { /* dev: widget stays off */ }
     if (!sitekey) return;
@@ -84,7 +105,11 @@
     if (!window.turnstile) return;
     try {
       tsWidgetId = window.turnstile.render("#tsWidget", {
-        sitekey: sitekey, action: TS_ACTION, theme: "dark",
+        sitekey: sitekey, action: TS_ACTION, size: "flexible",
+        // Only show a widget when a challenge is actually required; a green
+        // "Success!" box above the CTA reads as an ad to first-time users.
+        appearance: "interaction-only",
+        theme: document.documentElement.dataset.theme === "dark" ? "dark" : "light",
       });
     } catch (e) { tsWidgetId = null; }
   }
@@ -105,24 +130,155 @@
 
   async function refreshCredits() {
     try {
-      const r = await fetch("/api/credits?user=" + encodeURIComponent(user));
+      const r = await fetch(api("/api/credits?user=" + encodeURIComponent(user)));
       if (!r.ok) throw new Error("credits " + r.status);
       setCredits((await r.json()).credits_left);
     } catch (e) {
-      creditsBadge.textContent = "credits left: ?";
+      creditsBadge.textContent = "free edits: ?";
       creditsBadge.title = "Could not reach backend: " + e.message;
     }
   }
 
+  function setBuyStatus(msg, isError) {
+    buyStatus.textContent = msg || "";
+    buyStatus.classList.toggle("error", !!isError);
+  }
+
+  function peso(centavos) {
+    return "₱" + (centavos / 100).toLocaleString("en-PH", {
+      minimumFractionDigits: 2, maximumFractionDigits: 2});
+  }
+
+  function showBuyCard() {
+    buyCard.scrollIntoView({ behavior: "smooth", block: "center" });
+    const first = packsBox.querySelector("button");
+    if (first) first.focus({ preventScroll: true });
+  }
+
+  async function startCheckout(pack, btn) {
+    const email = buyEmail.value.trim();
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+      setBuyStatus("Enter a valid email first — it is how we recover your edits if this browser loses its data.", true);
+      buyEmail.focus();
+      return;
+    }
+    btn.disabled = true;
+    setBuyStatus("Opening secure checkout…");
+    try {
+      const r = await fetch(api("/api/checkout"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pack: pack.id, user: user, email: email }),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok || !data.checkout_url)
+        throw new Error(data.detail || ("checkout failed: " + r.status));
+      location.href = data.checkout_url; // Xendit hosted checkout
+    } catch (e) {
+      setBuyStatus("Could not start checkout: " + e.message, true);
+      btn.disabled = false;
+    }
+  }
+
+  // Owner-curated gallery: edit web/showcase.json, drop files in web/showcase/.
+  // Entries are only what the owner chose to publish — never a user's own job.
+  async function loadShowcase() {
+    const card = document.getElementById("showcase");
+    const box = document.getElementById("showcaseGrid");
+    if (!card || !box) return;
+    let items = null;
+    try {
+      const r = await fetch("showcase.json", { cache: "no-cache" });
+      if (r.ok) items = (await r.json());
+    } catch (e) { /* no showcase */ }
+    if (!Array.isArray(items) || !items.length) return;
+    box.innerHTML = "";
+    items.forEach((it) => {
+      const fig = document.createElement("figure");
+      const img = document.createElement("img");
+      img.loading = "lazy";
+      img.decoding = "async";
+      img.src = it.image;
+      img.alt = it.note || (it.preset ? it.preset + " edit" : "Edited photo");
+      fig.appendChild(img);
+      const cap = document.createElement("figcaption");
+      cap.textContent = [it.preset, it.note].filter(Boolean).join(" — ");
+      fig.appendChild(cap);
+      box.appendChild(fig);
+    });
+    card.hidden = false;
+  }
+
+  async function loadPacks() {
+    let packs = null;
+    try {
+      const r = await fetch(api("/api/packs"));
+      if (r.ok) packs = (await r.json()).packs;
+    } catch (e) { /* offline: keep the note */ }
+    if (!packs || !packs.length) {
+      packsBox.innerHTML = "<p class='muted'>Edit packs are unavailable right now.</p>";
+      buyCard.style.display = "none"; // unconfigured: no dead offer on the page
+      return;
+    }
+    packsBox.innerHTML = "";
+    packs.forEach((p) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "pack";
+      btn.innerHTML = "<b></b><small></small>";
+      btn.querySelector("b").textContent = p.label + " — " + peso(p.price);
+      btn.querySelector("small").textContent = p.credits + " edits";
+      btn.onclick = () => startCheckout(p, btn);
+      packsBox.appendChild(btn);
+    });
+  }
+
+  // success_url carries ?paid=1: poll credits until the webhook lands.
+  async function confirmPayment() {
+    const qp = new URLSearchParams(location.search);
+    if (qp.get("paid") !== "1") return;
+    qp.delete("paid");
+    try {
+      history.replaceState(null, "", location.pathname
+        + (qp.toString() ? "?" + qp : "") + location.hash);
+    } catch (e) { /* file:// */ }
+    let start = null;
+    try {
+      const r = await fetch(api("/api/credits?user=" + encodeURIComponent(user)));
+      if (r.ok) start = (await r.json()).credits_left;
+    } catch (e) { /* baseline unknown */ }
+    setStatus("Confirming your payment…");
+    setBuyStatus("Confirming your payment…");
+    showBuyCard();
+    const deadline = Date.now() + 30000;
+    while (Date.now() < deadline) {
+      await new Promise((res) => setTimeout(res, 3000));
+      try {
+        const r = await fetch(api("/api/credits?user=" + encodeURIComponent(user)));
+        if (!r.ok) continue;
+        const n = (await r.json()).credits_left;
+        setCredits(n);
+        if (start === null || n > start) {
+          setStatus("Credits added");
+          setBuyStatus("Credits added — thanks for supporting free edits.");
+          return;
+        }
+      } catch (e) { /* next tick */ }
+    }
+    const msg = "Still confirming — it can take a minute; the credits appear automatically.";
+    setStatus(msg);
+    setBuyStatus(msg);
+  }
+
   function selectPreset(id, save = true) {
     activePreset = id;
-    [...presetsBox.children].forEach((el) =>
-      el.classList.toggle("active", el.dataset.id === id));
+    [...presetsBox.children].forEach((el) => {
+      el.classList.toggle("active", el.dataset.id === id);
+      el.setAttribute("aria-pressed", String(el.dataset.id === id));
+    });
     const copy = PRESET_COPY[id] || PRESET_COPY.custom;
     promptLabel.textContent = copy.label;
     promptEl.placeholder = copy.ph;
-    if (!promptEl.value.trim()) // chip fills an empty box; typed text always wins
-      promptEl.value = (copy.ph || "").replace(/^e\.g\.\s*/, "");
     if (save) { try { localStorage.setItem(PRESET_KEY, id); } catch (e) { /* private mode */ } }
   }
 
@@ -174,30 +330,28 @@
   async function loadPresets() {
     let list = null;
     try {
-      const r = await fetch("/api/presets");
+      const r = await fetch(api("/api/presets"));
       if (r.ok) list = (await r.json()).presets;
     } catch (e) { /* builtin fallback */ }
     if (!list) {
       list = [
-        {id: "background", label: "🏙 Background", hint: "1 photo"},
-        {id: "clothes", label: "👔 Clothes", hint: "1 photo"},
-        {id: "restore", label: "✨ Restore", hint: "1 photo"},
-        {id: "custom", label: "✏ Custom", hint: "free-form"},
+        {id: "background", label: "Background", hint: "up to 5 photos"},
+        {id: "clothes", label: "Clothes", hint: "up to 5 photos"},
+        {id: "restore", label: "Restore", hint: "up to 5 photos"},
+        {id: "custom", label: "Custom", hint: "free-form"},
       ];
     }
     presetsBox.innerHTML = "";
     list.forEach((p) => {
-      const el = document.createElement("div");
+      const el = document.createElement("button");
+      el.type = "button";
       el.className = "preset";
       el.dataset.id = p.id;
-      el.setAttribute("role", "radio");
-      el.tabIndex = 0;
-      el.innerHTML = "<b></b><small></small>";
-      el.querySelector("b").textContent = p.label;
+      el.innerHTML = ico(PRESET_ICONS[p.id] || "i-pencil") + "<b></b><small></small>";
+      el.querySelector("b").textContent = plain(p.label);
       el.querySelector("small").textContent = p.hint;
       const pick = () => selectPreset(p.id);
       el.onclick = pick;
-      el.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pick(); } };
       presetsBox.appendChild(el);
     });
     const sp = savedPreset(); // reload keeps the picked chip; typed prompt untouched
@@ -210,30 +364,42 @@
   }
 
   function renderThumbs() {
+    thumbUrls.forEach((url) => URL.revokeObjectURL(url));
+    thumbUrls = [];
     thumbs.innerHTML = "";
-    if (!file) return;
+    files.forEach((file, index) => {
     const wrap = document.createElement("div");
     wrap.className = "thumb";
     const img = document.createElement("img");
     img.src = URL.createObjectURL(file);
-    img.alt = "upload";
+    thumbUrls.push(img.src);
+    img.alt = "Photo " + (index + 1);
     const rm = document.createElement("button");
     rm.type = "button";
     rm.textContent = "×";
-    rm.setAttribute("aria-label", "Remove image");
-    rm.onclick = (e) => { e.stopPropagation(); file = null; renderThumbs(); idbDel(); };
+    rm.setAttribute("aria-label", "Remove photo " + (index + 1));
+    rm.onclick = (e) => { e.stopPropagation(); files.splice(index, 1); renderThumbs(); saveDraft(); };
     wrap.append(img, rm);
     thumbs.appendChild(wrap);
+    });
   }
 
-  function addFile(f) {
-    if (!f) return;
-    if (!OK_TYPES.includes(f.type)) { setStatus("Rejected: only jpeg/png/webp.", true); return; }
-    if (f.size > MAX_BYTES) { setStatus("Rejected: over 5MB.", true); return; }
-    file = f;
+  function saveDraft() {
+    draftChanged = true;
+    const photos = files.map((f) => ({blob: f, name: f.name, type: f.type}));
+    draftWrites = draftWrites.then(() => photos.length ? idbPut(photos) : idbDel());
+  }
+
+  function addFiles(incoming) {
+    const added = Array.from(incoming);
+    if (!added.length) return;
+    if (files.length + added.length > MAX_IMAGES) { setStatus("Rejected: maximum 5 photos.", true); return; }
+    if (added.some((f) => !OK_TYPES.includes(f.type))) { setStatus("Rejected: only jpeg/png/webp.", true); return; }
+    if (added.some((f) => !f.size || f.size > MAX_BYTES)) { setStatus("Rejected: empty photo or over 5MB.", true); return; }
+    files.push(...added);
     renderThumbs();
-    idbPut({blob: f, name: f.name, type: f.type});
-    setStatus("Photo ready.");
+    saveDraft();
+    setStatus(files.length + (files.length === 1 ? " photo ready." : " photos ready."));
   }
 
   dropzone.addEventListener("click", (e) => {
@@ -243,14 +409,14 @@
   dropzone.addEventListener("keydown", (e) => {
     if (e.key === "Enter" || e.key === " ") { e.preventDefault(); fileInput.click(); }
   });
-  fileInput.addEventListener("change", () => { addFile(fileInput.files[0]); fileInput.value = ""; });
+  fileInput.addEventListener("change", () => { addFiles(fileInput.files); fileInput.value = ""; });
   ["dragenter", "dragover"].forEach((ev) => dropzone.addEventListener(ev, (e) => {
     e.preventDefault(); dropzone.classList.add("over");
   }));
   ["dragleave", "drop"].forEach((ev) => dropzone.addEventListener(ev, (e) => {
     e.preventDefault(); dropzone.classList.remove("over");
   }));
-  dropzone.addEventListener("drop", (e) => addFile(e.dataTransfer.files[0]));
+  dropzone.addEventListener("drop", (e) => addFiles(e.dataTransfer.files));
 
   document.addEventListener("paste", (e) => {
     const cd = e.clipboardData;
@@ -264,7 +430,7 @@
     if (!found.length && cd.files && cd.files.length) {
       for (const f of cd.files) found.push(f);
     }
-    if (found.length) { e.preventDefault(); addFile(found[0]); }
+    if (found.length) { e.preventDefault(); addFiles(found); }
   });
 
   function fmtTime(ts) {
@@ -280,20 +446,27 @@
   function stageResult(j) { // newest result takes the stage under the button
     if (!j || j.status !== "done" || !j.image_url) return;
     resultBox.innerHTML = "";
+    prefetchShare(j);
     resultBox.appendChild(cardFor(j));
     resultBox.classList.remove("hidden");
   }
 
   async function pollOne(jobId) {
     try {
-      const r = await fetch("/api/result/" + jobId + uq);
-      if (!r.ok) return;
+      const r = await fetch(api("/api/result/" + jobId) + uq);
+      if (r.status === 404) {
+        stopPoll(jobId);
+        setStatus("This edit is no longer available.", true);
+        return;
+      }
+      if (!r.ok) { setStatus("Unable to check your edit. Retrying in 10 seconds…", true); return; }
       const j = await r.json();
       if (j.status === "done" || j.status === "failed") {
         stopPoll(jobId);
         await loadHistory();
         stageResult(j);
-        setStatus(j.status === "done" ? "Job " + jobId + " done ✨"
+        setStatus(j.artifacts_expired ? "Photos expired after seven days. Upload a photo to edit again."
+                  : j.status === "done" ? "Job " + jobId + " done"
                                       : "Job " + jobId + " failed — credit refunded.", j.status === "failed");
         refreshCredits();
       }
@@ -305,6 +478,22 @@
     timers.set(jobId, setInterval(() => pollOne(jobId), POLL_MS));
   }
 
+  function resultUrl(path) {
+    if (!/^\/api\/result\/[a-zA-Z0-9_-]+\/(file|input\/\d+)$/.test(path))
+      throw new Error("Invalid result URL");
+    return api(path) + uq;
+  }
+
+  // Share blobs are cached per job and only prefetched for the card on the
+  // stage; history cards must not pull 30 full PNGs on first paint.
+  const shareBlobs = new Map();
+  function prefetchShare(j) {
+    if (!j.image_url || shareBlobs.has(j.job_id)) return;
+    shareBlobs.set(j.job_id, fetch(resultUrl(j.image_url))
+      .then((r) => (r.ok ? r.blob() : null))
+      .catch(() => null));
+  }
+
   function cardFor(j) {
     const card = document.createElement("article");
     card.className = "job";
@@ -312,15 +501,23 @@
     head.className = "job-head";
     head.innerHTML = "<b></b><small></small>";
     head.querySelector("b").textContent =
-      (j.status === "done" ? "✅ " : j.status === "failed" ? "❌ " : "⏳ Building… ") + j.preset;
+      (j.status === "running" || !j.status ? "Building… " : "") + j.preset;
     head.querySelector("small").textContent = fmtTime(j.created_at);
     card.appendChild(head);
+
+    if (j.artifacts_expired) {
+      const p = document.createElement("p");
+      p.className = "muted";
+      p.textContent = "Photos expired after seven days. Edit history is retained.";
+      card.appendChild(p);
+      return card;
+    }
 
     const inRow = document.createElement("div");
     inRow.className = "job-thumbs";
     (j.inputs || []).forEach((src) => {
       const img = document.createElement("img");
-      img.src = src + uq;
+      img.src = resultUrl(src);
       img.alt = "input";
       img.loading = "lazy";
       inRow.appendChild(img);
@@ -331,21 +528,43 @@
       const after = document.createElement("img");
       after.alt = "edited result";
       after.loading = "lazy";
-      after.style.cssText = "width:100%;height:auto;border-radius:10px;border:1px solid var(--line);background:#0d0b09";
-      after.src = j.image_url + uq;
-      card.appendChild(after);
+      after.style.cssText = "width:100%;height:auto;border-radius:10px;border:0;background:var(--bg)";
+      after.src = resultUrl(j.image_url);
+      const compare = document.createElement("div");
+      compare.className = "compare";
+      const before = document.createElement("img");
+      before.className = "compare-before";
+      before.alt = "Original photo";
+      before.src = resultUrl((j.inputs || [])[0] || "/api/result/" + j.job_id + "/input/0");
+      const range = document.createElement("input");
+      range.type = "range";
+      range.min = "0"; range.max = "100"; range.value = "50";
+      range.setAttribute("aria-label", "Compare original and edited photo");
+      const update = () => {
+        before.style.clipPath = "inset(0 " + (100 - range.value) + "% 0 0)";
+        range.setAttribute("aria-valuetext", range.value + "% original photo");
+      };
+      range.addEventListener("input", update);
+      update();
+      const labels = document.createElement("p");
+      labels.className = "compare-labels muted";
+      labels.textContent = "Original ← slide to compare → Edited";
+      before.onerror = () => { before.remove(); range.hidden = true; labels.textContent = "Original unavailable — edited photo shown."; };
+      compare.append(after, before);
+      inRow.remove();
+      card.append(compare, labels, range);
       const row = document.createElement("div");
       row.className = "row";
       const dl = document.createElement("button");
       dl.type = "button";
       dl.className = "dl solid";
-      dl.textContent = "⬇ Download result";
+      dl.innerHTML = ico("i-download") + " Download result";
       dl.onclick = async () => {
         dl.disabled = true;
-        const old = dl.textContent;
-        dl.textContent = "⏳ Saving…";
+        const old = dl.innerHTML;
+        dl.innerHTML = ico("i-clock") + " Saving…";
         try {
-          const r = await fetch(j.image_url + uq);
+          const r = await fetch(resultUrl(j.image_url));
           if (!r.ok) throw new Error("download " + r.status);
           const blob = await r.blob();
           const url = URL.createObjectURL(blob);
@@ -360,10 +579,46 @@
           setStatus("Download failed: " + e.message, true);
         } finally {
           dl.disabled = false;
-          dl.textContent = old;
+          dl.innerHTML = old;
         }
       };
       row.appendChild(dl);
+      // Share the actual PNG, never resultUrl(): that URL is a bearer link to
+      // this browser's job. Files keep the recipient off the API entirely.
+      const sh = document.createElement("button");
+      sh.type = "button";
+      sh.className = "dl";
+      sh.innerHTML = ico("i-share") + " Share";
+      sh.onclick = async () => {
+        const text = "Edited with Free Photo Edit — libre, 5 free edits a day, walang account. " + location.origin + "/";
+        try {
+          let blob = null;
+          try {
+            blob = await (shareBlobs.get(j.job_id)
+              || fetch(resultUrl(j.image_url)).then((r) => (r.ok ? r.blob() : null)));
+          } catch (e) { /* fall through to text share */ }
+          if (blob) {
+            const file = new File([blob], "free-photo-edit.png", { type: "image/png" });
+            if (navigator.canShare && navigator.canShare({ files: [file] })) {
+              await navigator.share({ files: [file], text });
+              return;
+            }
+          }
+          if (navigator.share) {
+            await navigator.share({ text, url: location.origin + "/" });
+            return;
+          }
+          throw new Error("no share sheet");
+        } catch (e) {
+          if (e.name === "AbortError") return; // user closed the sheet
+          // No usable share path (desktop, in-app webview, lost activation):
+          // save the file and leave the caption on the clipboard.
+          dl.click();
+          try { await navigator.clipboard.writeText(text); } catch (_) { /* insecure origin */ }
+          setStatus("Download started — if no file appears, long-press the photo to save it.");
+        }
+      };
+      row.appendChild(sh);
       card.appendChild(row);
     } else if (j.status === "failed") {
       const p = document.createElement("p");
@@ -373,7 +628,7 @@
     } else {
       const p = document.createElement("p");
       p.className = "job-spin";
-      p.textContent = "⏳ Editing… you can close this tab — it will be here when you return.";
+      p.textContent = "Editing… you can close this tab — it will be here when you return.";
       card.appendChild(p);
     }
     return card;
@@ -381,7 +636,7 @@
 
   async function loadHistory() {
     try {
-      const r = await fetch("/api/jobs?user=" + encodeURIComponent(user));
+      const r = await fetch(api("/api/jobs?user=" + encodeURIComponent(user)));
       if (!r.ok) throw new Error("jobs " + r.status);
       const jobs = (await r.json()).jobs || [];
       historyEl.innerHTML = "";
@@ -396,7 +651,9 @@
         seen.add(j.job_id);
         if (j.status !== "done" && j.status !== "failed") startPoll(j.job_id);
       });
-      stageResult(jobs.find((j) => j.status === "done")); // survives tab close
+      resultBox.innerHTML = "";
+      resultBox.classList.add("hidden");
+      stageResult(jobs.find((j) => j.status === "done" && !j.artifacts_expired)); // survives tab close
       [...timers.keys()].forEach((id) => { if (!seen.has(id)) stopPoll(id); });
     } catch (e) {
       historyEl.innerHTML = "<p class='muted'>History unavailable: " + e.message + "</p>";
@@ -404,27 +661,30 @@
   }
 
   submitBtn.addEventListener("click", async () => {
-    if (!file) { setStatus("Add 1 photo first.", true); return; }
+    if (submitBtn.disabled) return;
+    if (!files.length) { setStatus("Add a photo first.", true); return; }
     const prompt = promptEl.value.trim();
-    if (!prompt) { setStatus("Describe what you want first.", true); return; }
+    if (!prompt && activePreset !== "restore") { setStatus("Describe what you want first.", true); return; }
     const fd = new FormData();
-    fd.append("image", file, file.name);
+    files.forEach((file) => fd.append("image", file, file.name));
     fd.append("prompt", prompt);
     fd.append("preset", activePreset);
     fd.append("user", user);
     fd.append("cf-turnstile-response", tsToken());
-    setStatus("Queued… ⚡");
+    submitBtn.disabled = true;
+    setStatus("Sending photo…");
     try {
-      const r = await fetch("/api/edit", { method: "POST", body: fd });
+      const r = await fetch(api("/api/edit"), { method: "POST", body: fd });
       tsReset(); // single-use token: fresh widget state for any retry
       const data = await r.json().catch(() => ({}));
       if (r.status === 402) {
         setCredits(0);
-        setStatus(data.detail || "Free runs used up — try again tomorrow.", true);
+        setStatus((data.detail || "Out of edits") + " — pick a pack below to keep going.", true);
+        showBuyCard();
         return;
       }
       if (r.status === 403) {
-        setStatus(data.detail || "Bot check failed — tick the box and retry.", true);
+        setStatus(data.detail || "Bot check didn't finish — tap Edit photo again.", true);
         return;
       }
       if (r.status === 503) {
@@ -432,12 +692,12 @@
         return;
       }
       if (r.status === 429) {
-        setStatus("Slot full — " + (data.detail || "try again shortly") + ".", true);
+        setStatus((data.detail || "Server busy") + ". Retry after " + (r.headers.get("Retry-After") || "10") + " seconds.", true);
         return;
       }
-      if (r.status !== 202 && !r.ok) throw new Error(data.detail || ("edit failed: " + r.status));
+      if (r.status !== 202 || !data.job_id) throw new Error(data.detail || ("edit failed: " + r.status));
       setCredits(data.credits_left);
-      setStatus("Job " + data.job_id + " editing… ⏳");
+      setStatus("Job " + data.job_id + " editing…");
       formBody.classList.add("hidden"); // photo + prompt kept as-is for retry
       editAnother.classList.remove("hidden");
       resultBox.classList.add("hidden");
@@ -447,7 +707,11 @@
       refreshCredits();
     } catch (e) {
       tsReset();
-      setStatus("Error: " + e.message, true);
+      setStatus("Error: " + e.message + ". Check Past edits before retrying — the server may have received your photo.", true);
+      loadHistory();
+      refreshCredits();
+    } finally {
+      submitBtn.disabled = false;
     }
   });
 
@@ -461,10 +725,13 @@
     try { localStorage.setItem(PROMPT_KEY, promptEl.value); } catch (e) { /* no-op */ }
   });
   idbGet().then((saved) => {
-    if (saved && saved.blob && !file) {
-      const blob = saved.blob;
-      addFile(blob instanceof File ? blob
-        : new File([blob], saved.name || "photo", {type: saved.type || blob.type}));
+    if (saved && !draftChanged) {
+      const photos = Array.isArray(saved) ? saved : [saved];
+      addFiles(photos.filter((photo) => photo && photo.blob).map((photo) => {
+        const blob = photo.blob;
+        return blob instanceof File ? blob
+          : new File([blob], photo.name || "photo", {type: photo.type || blob.type});
+      }));
     }
   }).catch(() => { /* fresh form */ });
 
@@ -472,4 +739,7 @@
   loadPresets();
   refreshCredits();
   loadHistory();
+  loadPacks();
+  loadShowcase();
+  confirmPayment();
 })();

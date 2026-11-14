@@ -3,14 +3,19 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%23535695' d='M11 2l2 5.1 5.1 2-5.1 2-2 5.1-2-5.1-5.1-2 5.1-2z'/%3E%3Cpath fill='%23535695' d='M18 14.5l.9 2.3 2.3.9-2.3.9-.9 2.3-.9-2.3-2.3-.9 2.3-.9z'/%3E%3C/svg%3E">
+<meta name="api-base" content="">
 <title>Privacy — Free Photo Edit</title>
-<link rel="stylesheet" href="site.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;700&family=Karla:wght@400;500&display=swap">
+<link rel="stylesheet" href="site.css?v=5">
 <script>try { document.documentElement.dataset.theme = localStorage.getItem("fpe-theme") === "dark" ? "dark" : "light"; } catch (e) { document.documentElement.dataset.theme = "light"; }</script>
 </head>
 <body>
 <header class="site-head">
-  <a class="brand" href="index.html">✨ Free Photo Edit</a>
-  <button id="themeBtn" class="dl" type="button">🌙 Dark</button>
+  <a class="brand" href="index.html"><svg class="ico" aria-hidden="true"><use href="icons.svg#i-sparkles"></use></svg> Free Photo Edit</a>
+  <button id="themeBtn" class="dl" type="button"><svg class="ico" aria-hidden="true"><use href="icons.svg#i-moon"></use></svg> Dark</button>
 </header>
 <main class="page">
   <h1>Privacy</h1>
@@ -20,6 +25,7 @@
   <p><b>Your results and history.</b> Uploads and edited images are stored on our server so your history and results can load again after you reload the page.</p>
   <p><b>An anonymous ID</b> saved in your browser. It keeps your history and credits together. It is not your name or account.</p>
   <p><b>Your IP address</b>, used only to limit how many free edits one network can run.</p>
+  <p><b>Your email</b>, if you buy an edit pack. It is shared with our payment provider (Xendit) with the checkout and kept with the payment record so we can help if you lose your browser data. It is not used for marketing.</p>
   <p><b>Bot check.</b> When it is turned on, Cloudflare Turnstile checks that a real person is using the page.</p>
   <h2>What we do not do</h2>
   <p>We do not sell your photos or personal data, and we do not use them to train models.</p>
@@ -31,8 +37,8 @@
   <p>Questions about privacy: message us through <a href="https://ko-fi.com/twe222" target="_blank" rel="noopener">Ko-fi</a>.</p>
 </main>
 <footer class="site-foot">
-  <a href="index.html">Home</a> · <a href="about.html">About</a> · <a href="privacy.html">Privacy</a> · <a href="terms.html">Terms</a> · <a href="https://ko-fi.com/twe222" target="_blank" rel="noopener">Ko-fi</a>
+  <a href="index.html">Home</a> · <a href="about.html">About</a> · <a href="faq.html">FAQ</a> · <a href="privacy.html">Privacy</a> · <a href="terms.html">Terms</a> · <a href="https://ko-fi.com/twe222" target="_blank" rel="noopener">Ko-fi</a>
 </footer>
-<script src="site.js" defer></script>
+<script src="site.js?v=3" defer></script>
 </body>
 </html>

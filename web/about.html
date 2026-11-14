@@ -3,14 +3,19 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%23535695' d='M11 2l2 5.1 5.1 2-5.1 2-2 5.1-2-5.1-5.1-2 5.1-2z'/%3E%3Cpath fill='%23535695' d='M18 14.5l.9 2.3 2.3.9-2.3.9-.9 2.3-.9-2.3-2.3-.9 2.3-.9z'/%3E%3C/svg%3E">
+<meta name="api-base" content="">
 <title>About — Free Photo Edit</title>
-<link rel="stylesheet" href="site.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;700&family=Karla:wght@400;500&display=swap">
+<link rel="stylesheet" href="site.css?v=5">
 <script>try { document.documentElement.dataset.theme = localStorage.getItem("fpe-theme") === "dark" ? "dark" : "light"; } catch (e) { document.documentElement.dataset.theme = "light"; }</script>
 </head>
 <body>
 <header class="site-head">
-  <a class="brand" href="index.html">✨ Free Photo Edit</a>
-  <button id="themeBtn" class="dl" type="button">🌙 Dark</button>
+  <a class="brand" href="index.html"><svg class="ico" aria-hidden="true"><use href="icons.svg#i-sparkles"></use></svg> Free Photo Edit</a>
+  <button id="themeBtn" class="dl" type="button"><svg class="ico" aria-hidden="true"><use href="icons.svg#i-moon"></use></svg> Dark</button>
 </header>
 <main class="page">
   <h1>About</h1>
@@ -20,13 +25,13 @@
   <h2>Why it has limits</h2>
   <p>Every edit costs real money in AI fees. Free runs are limited per person and per day so the service stays available for everyone.</p>
   <h2>Support it</h2>
-  <p>If it helps you, you can donate by scanning the GCash QR on the home page or through <a href="https://ko-fi.com/twe222" target="_blank" rel="noopener">Ko-fi</a>. Donations cover the AI costs. They are voluntary.</p>
+  <p>If the free edits run out, you can buy a pack of edits (10, 25 or 60) on the home page, paid with GCash, Maya, GrabPay or card through Xendit. You can also donate by scanning the GCash QR on the home page or through <a href="https://ko-fi.com/twe222" target="_blank" rel="noopener">Ko-fi</a>. Both cover the AI costs. Donations are voluntary.</p>
   <h2>Contact</h2>
   <p>Send a message through <a href="https://ko-fi.com/twe222" target="_blank" rel="noopener">Ko-fi</a>.</p>
 </main>
 <footer class="site-foot">
-  <a href="index.html">Home</a> · <a href="about.html">About</a> · <a href="privacy.html">Privacy</a> · <a href="terms.html">Terms</a> · <a href="https://ko-fi.com/twe222" target="_blank" rel="noopener">Ko-fi</a>
+  <a href="index.html">Home</a> · <a href="about.html">About</a> · <a href="faq.html">FAQ</a> · <a href="privacy.html">Privacy</a> · <a href="terms.html">Terms</a> · <a href="https://ko-fi.com/twe222" target="_blank" rel="noopener">Ko-fi</a>
 </footer>
-<script src="site.js" defer></script>
+<script src="site.js?v=3" defer></script>
 </body>
 </html>
