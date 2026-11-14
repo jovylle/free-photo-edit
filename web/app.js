@@ -540,6 +540,48 @@
   // Share blobs are cached per job and only prefetched for the card on the
   // stage; history cards must not pull 30 full PNGs on first paint.
   const shareBlobs = new Map();
+  const creditBlobs = new Map();
+
+  function saveBlob(blob, name) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+  }
+
+  // Link posts get a person flagged in groups, so the attribution lives IN the
+  // image: a quiet footer strip added under the photo, never a URL in the text.
+  async function creditedBlob(jobId, blob) {
+    if (creditBlobs.has(jobId)) return creditBlobs.get(jobId);
+    const img = await createImageBitmap(blob);
+    const pad = Math.round(Math.max(24, Math.min(img.width, img.height) * 0.045));
+    const bar = Math.round(Math.max(52, img.height * 0.085));
+    const size = Math.round(bar * 0.33);
+    const canvas = document.createElement("canvas");
+    canvas.width = img.width;
+    canvas.height = img.height + bar;
+    const ctx = canvas.getContext("2d");
+    ctx.fillStyle = "#eeedf5";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(img, 0, 0);
+    ctx.textBaseline = "middle";
+    ctx.fillStyle = "#3d3c43";
+    ctx.font = '700 ' + size + 'px Manrope, system-ui, sans-serif';
+    ctx.textAlign = "left";
+    ctx.fillText("freephoto.uft1.com", pad, img.height + bar / 2);
+    ctx.fillStyle = "#6e6d78";
+    ctx.font = '500 ' + Math.round(size * 0.82) + 'px Karla, system-ui, sans-serif';
+    ctx.textAlign = "right";
+    ctx.fillText("free photo edit", canvas.width - pad, img.height + bar / 2);
+    const out = await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
+    if (!out) throw new Error("could not build the image");
+    creditBlobs.set(jobId, out);
+    return out;
+  }
   function prefetchShare(j) {
     if (!j.image_url || shareBlobs.has(j.job_id)) return;
     shareBlobs.set(j.job_id, fetch(resultUrl(j.image_url))
@@ -619,15 +661,7 @@
         try {
           const r = await fetch(resultUrl(j.image_url));
           if (!r.ok) throw new Error("download " + r.status);
-          const blob = await r.blob();
-          const url = URL.createObjectURL(blob);
-          const a = document.createElement("a");
-          a.href = url;
-          a.download = "free-photo-edit-" + j.job_id + ".png";
-          document.body.appendChild(a);
-          a.click();
-          a.remove();
-          setTimeout(() => URL.revokeObjectURL(url), 5000);
+          saveBlob(await r.blob(), "free-photo-edit-" + j.job_id + ".png");
         } catch (e) {
           setStatus("Download failed: " + e.message, true);
         } finally {
@@ -643,36 +677,52 @@
       sh.className = "dl";
       sh.innerHTML = ico("i-share") + " Share";
       sh.onclick = async () => {
-        const text = "Edited with Free Photo Edit — libre, 5 free edits a day, walang account. " + location.origin + "/";
+        sh.disabled = true;
+        const old = sh.innerHTML;
+        sh.innerHTML = ico("i-clock") + " Preparing…";
         try {
-          let blob = null;
-          try {
-            blob = await (shareBlobs.get(j.job_id)
-              || fetch(resultUrl(j.image_url)).then((r) => (r.ok ? r.blob() : null)));
-          } catch (e) { /* fall through to text share */ }
-          if (blob) {
-            const file = new File([blob], "free-photo-edit.png", { type: "image/png" });
-            if (navigator.canShare && navigator.canShare({ files: [file] })) {
-              await navigator.share({ files: [file], text });
-              return;
-            }
-          }
-          if (navigator.share) {
-            await navigator.share({ text, url: location.origin + "/" });
+          const blob = await (shareBlobs.get(j.job_id)
+            || fetch(resultUrl(j.image_url)).then((r) => (r.ok ? r.blob() : null)));
+          if (!blob) throw new Error("could not load the photo");
+          await document.fonts.ready.catch(() => {}); // footer text uses the site fonts
+          const shared = await creditedBlob(j.job_id, blob);
+          const name = "free-photo-edit-" + j.job_id + ".png";
+          const file = new File([shared], name, { type: "image/png" });
+          if (navigator.canShare && navigator.canShare({ files: [file] })) {
+            // Some desktops report canShare(files) but never settle the share
+            // promise, which used to leave the button stuck on "Preparing…".
+            await Promise.race([
+              navigator.share({ files: [file], text: "Edited with Free Photo Edit" }),
+              new Promise((_, reject) => setTimeout(
+                () => reject(Object.assign(new Error("share sheet did not open"), { name: "TimeoutError" })),
+                15000)),
+            ]);
             return;
           }
-          throw new Error("no share sheet");
+          // No share sheet (desktop, in-app webview): save the credited image
+          // instead of posting a link — links are what get flagged in groups.
+          saveBlob(shared, name);
+          setStatus("Saved the shareable image — it carries a small credit footer.");
         } catch (e) {
           if (e.name === "AbortError") return; // user closed the sheet
-          // No usable share path (desktop, in-app webview, lost activation):
-          // save the file and leave the caption on the clipboard.
-          dl.click();
-          try { await navigator.clipboard.writeText(text); } catch (_) { /* insecure origin */ }
-          setStatus("Download started — if no file appears, long-press the photo to save it.");
+          if (e.name === "TimeoutError") {
+            saveBlob(await creditedBlob(j.job_id, await (shareBlobs.get(j.job_id)
+              || fetch(resultUrl(j.image_url)).then((r) => r.blob()))), name);
+            setStatus("Share sheet did not open — the image was saved instead.");
+            return;
+          }
+          setStatus("Could not share: " + e.message, true);
+        } finally {
+          sh.disabled = false;
+          sh.innerHTML = old;
         }
       };
       row.appendChild(sh);
       card.appendChild(row);
+      const note = document.createElement("p");
+      note.className = "muted";
+      note.textContent = "Share saves a copy with a small credit footer. Download is the clean photo, no text added.";
+      card.appendChild(note);
     } else if (j.status === "failed") {
       const p = document.createElement("p");
       p.className = "job-fail";
