@@ -591,6 +591,103 @@
       .catch(() => null));
   }
 
+  // Share panel: the credited copy, visible and copyable. Desktops rarely have
+  // a share sheet, and the old fallback silently saved a file instead.
+  let shareJob = null;
+  let shareCredited = null;
+  let shareObjectUrl = null;
+  const shareName = () => "free-photo-edit-" + (shareJob ? shareJob.job_id : "photo") + ".png";
+  const shareNoteText = () =>
+    "The footer carries <b>freephoto.uft1.com</b>, so the photo keeps its credit where posted links get flagged.";
+
+  async function openShare(job) {
+    const modal = $("shareModal"), img = $("sharePreview"), note = $("shareNote");
+    const copyImg = $("shareCopyImg"), save = $("shareSave"), native = $("shareNative");
+    shareJob = job;
+    shareCredited = null;
+    copyImg.disabled = true;
+    save.disabled = true;
+    img.removeAttribute("src");
+    note.textContent = "Preparing the credited copy…";
+    native.classList.toggle("hidden",
+      !(navigator.canShare && navigator.canShare({ files: [new File([new Blob()], "x.png", { type: "image/png" })] })));
+    if (typeof modal.showModal === "function") { if (!modal.open) modal.showModal(); }
+    else modal.setAttribute("open", "");
+    try {
+      const blob = await (shareBlobs.get(job.job_id)
+        || fetch(resultUrl(job.image_url)).then((r) => (r.ok ? r.blob() : null)));
+      if (!blob) throw new Error("could not load the photo");
+      await document.fonts.ready.catch(() => {}); // footer uses the site fonts
+      shareCredited = await creditedBlob(job.job_id, blob);
+      if (shareObjectUrl) URL.revokeObjectURL(shareObjectUrl);
+      shareObjectUrl = URL.createObjectURL(shareCredited);
+      img.src = shareObjectUrl;
+      note.innerHTML = shareNoteText();
+      copyImg.disabled = false;
+      save.disabled = false;
+    } catch (e) {
+      note.textContent = "Could not prepare the image: " + e.message;
+    }
+  }
+
+  function closeShare() {
+    const modal = $("shareModal");
+    if (typeof modal.close === "function") modal.close();
+    else modal.removeAttribute("open");
+    if (shareObjectUrl) { URL.revokeObjectURL(shareObjectUrl); shareObjectUrl = null; }
+    shareCredited = null;
+  }
+
+  $("shareClose").onclick = closeShare;
+  $("shareModal").addEventListener("close", () => {
+    if (shareObjectUrl) { URL.revokeObjectURL(shareObjectUrl); shareObjectUrl = null; }
+    shareCredited = null;
+    $("sharePreview").removeAttribute("src");
+  });
+  $("shareModal").addEventListener("click", (e) => {
+    if (e.target === $("shareModal")) closeShare(); // backdrop click
+  });
+  $("shareCopyImg").onclick = async () => {
+    const note = $("shareNote");
+    try {
+      if (!shareCredited) throw new Error("still preparing");
+      if (typeof ClipboardItem === "undefined") throw new Error("no image clipboard");
+      await navigator.clipboard.write([new ClipboardItem({ "image/png": shareCredited })]);
+      note.textContent = "Image copied — paste it into a post or a chat.";
+    } catch (e) {
+      note.textContent = "Copy was blocked. Right-click the image (long-press on a phone) and choose Copy image.";
+    }
+  };
+  $("shareSave").onclick = () => {
+    if (shareCredited) saveBlob(shareCredited, shareName());
+  };
+  $("shareCopyLink").onclick = async () => {
+    const url = location.origin + "/";
+    try {
+      await navigator.clipboard.writeText(url);
+      $("shareNote").textContent = "Link copied — " + url;
+    } catch (e) {
+      $("shareNote").textContent = "Clipboard blocked. The link is " + url;
+    }
+  };
+  $("shareNative").onclick = async () => {
+    if (!shareCredited) return;
+    const file = new File([shareCredited], shareName(), { type: "image/png" });
+    try {
+      await Promise.race([
+        navigator.share({ files: [file], text: "Edited with Free Photo Edit" }),
+        new Promise((_, reject) => setTimeout(
+          () => reject(Object.assign(new Error("share sheet did not open"), { name: "TimeoutError" })),
+          15000)),
+      ]);
+      closeShare();
+    } catch (e) {
+      if (e.name === "AbortError") return; // user closed the sheet
+      $("shareSave").click();
+      $("shareNote").textContent = "The share sheet did not open — saved the PNG instead.";
+    }
+  };
+
   function cardFor(j) {
     const card = document.createElement("article");
     card.className = "job";
@@ -652,73 +749,15 @@
         }
       };
       row.appendChild(dl);
-      // Share the actual PNG, never resultUrl(): that URL is a bearer link to
-      // this browser's job. Files keep the recipient off the API entirely.
+      // Share opens a panel showing the credited copy, so desktop users can
+      // copy the image itself instead of relying on a share sheet that may not
+      // exist. The panel is also the only place the URL is offered as text.
       const sh = document.createElement("button");
       sh.type = "button";
       sh.className = "dl";
       sh.innerHTML = ico("i-share") + " Share";
-      sh.onclick = async () => {
-        sh.disabled = true;
-        const old = sh.innerHTML;
-        sh.innerHTML = ico("i-clock") + " Preparing…";
-        try {
-          const blob = await (shareBlobs.get(j.job_id)
-            || fetch(resultUrl(j.image_url)).then((r) => (r.ok ? r.blob() : null)));
-          if (!blob) throw new Error("could not load the photo");
-          await document.fonts.ready.catch(() => {}); // footer text uses the site fonts
-          const shared = await creditedBlob(j.job_id, blob);
-          const name = "free-photo-edit-" + j.job_id + ".png";
-          const file = new File([shared], name, { type: "image/png" });
-          if (navigator.canShare && navigator.canShare({ files: [file] })) {
-            // Some desktops report canShare(files) but never settle the share
-            // promise, which used to leave the button stuck on "Preparing…".
-            await Promise.race([
-              navigator.share({ files: [file], text: "Edited with Free Photo Edit" }),
-              new Promise((_, reject) => setTimeout(
-                () => reject(Object.assign(new Error("share sheet did not open"), { name: "TimeoutError" })),
-                15000)),
-            ]);
-            return;
-          }
-          // No share sheet (desktop, in-app webview): save the credited image
-          // instead of posting a link — links are what get flagged in groups.
-          saveBlob(shared, name);
-          setStatus("Saved the shareable image — it carries a small credit footer.");
-        } catch (e) {
-          if (e.name === "AbortError") return; // user closed the sheet
-          if (e.name === "TimeoutError") {
-            saveBlob(await creditedBlob(j.job_id, await (shareBlobs.get(j.job_id)
-              || fetch(resultUrl(j.image_url)).then((r) => r.blob()))), name);
-            setStatus("Share sheet did not open — the image was saved instead.");
-            return;
-          }
-          setStatus("Could not share: " + e.message, true);
-        } finally {
-          sh.disabled = false;
-          sh.innerHTML = old;
-        }
-      };
+      sh.onclick = () => openShare(j);
       row.appendChild(sh);
-      // The photo share keeps the address inside the image, which is what
-      // survives a group that flags posted links. This is the explicit way to
-      // get the address itself, for DMs and places where a link is fine.
-      const copy = document.createElement("button");
-      copy.type = "button";
-      copy.className = "dl";
-      copy.innerHTML = ico("i-link") + " Copy link";
-      copy.onclick = async () => {
-        const url = location.origin + "/";
-        try {
-          await navigator.clipboard.writeText(url);
-          setStatus("Link copied — " + url);
-          copy.innerHTML = ico("i-check") + " Copied";
-          setTimeout(() => { copy.innerHTML = ico("i-link") + " Copy link"; }, 2000);
-        } catch (e) {
-          setStatus("Your browser blocked the clipboard. The link is " + url, true);
-        }
-      };
-      row.appendChild(copy);
       // Voluntary correction: re-edit the finished photo from plain text. No
       // chat model — the user's sentence goes straight to the engine, and the
       // result above is the only input.
@@ -801,7 +840,7 @@
       card.appendChild(panel);
       const note = document.createElement("p");
       note.className = "muted";
-      note.textContent = "Share saves a copy with a small credit footer. Download is the clean photo, no text added.";
+      note.textContent = "Share opens the credited copy to copy or save. Download is the clean photo, no text added.";
       card.appendChild(note);
     } else if (j.status === "failed") {
       const p = document.createElement("p");
