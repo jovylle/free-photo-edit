@@ -591,42 +591,81 @@
       .catch(() => null));
   }
 
-  // Share panel: the credited copy, visible and copyable. Desktops rarely have
-  // a share sheet, and the old fallback silently saved a file instead.
+  // Share panel. The credit line is ON by default (attribution is the point of
+  // the site) and one tick turns it off; the choice is remembered per browser.
   let shareJob = null;
-  let shareCredited = null;
+  let shareRaw = null;        // the finished result, untouched
+  let shareCredited = null;   // same photo plus the footer, built on demand
+  let shareBuilding = null;   // in-flight build, so double clicks share one canvas
   let shareObjectUrl = null;
+
+  const CREDIT_KEY = "fpe-credit";
   const shareName = () => "free-photo-edit-" + (shareJob ? shareJob.job_id : "photo") + ".png";
-  const shareNoteText = () =>
-    "The footer carries <b>freephoto.uft1.com</b>, so the photo keeps its credit where posted links get flagged.";
+  const canShareFiles = () => !!(navigator.canShare
+    && navigator.canShare({ files: [new File([new Blob()], "x.png", { type: "image/png" })] }));
+  const creditOn = () => {
+    try { return localStorage.getItem(CREDIT_KEY) !== "0"; } catch (e) { return true; }
+  };
+
+  function setShareBusy(busy) {
+    ["shareCopyImg", "shareSave", "shareNative"].forEach((id) => { $(id).disabled = busy; });
+  }
+
+  async function selectedBlob() {
+    if (!shareRaw) throw new Error("the photo is still loading");
+    if (!$("shareCredit").checked) return shareRaw;
+    if (shareCredited) return shareCredited;
+    if (!shareBuilding) {
+      shareBuilding = creditedBlob(shareJob.job_id, shareRaw)
+        .then((b) => { shareCredited = b; return b; })
+        .finally(() => { shareBuilding = null; });
+    }
+    return shareBuilding;
+  }
+
+  async function showSelected() {
+    const img = $("sharePreview"), note = $("shareNote");
+    const on = $("shareCredit").checked;
+    if (shareObjectUrl) { URL.revokeObjectURL(shareObjectUrl); shareObjectUrl = null; }
+    img.removeAttribute("src");
+    setShareBusy(true);
+    note.textContent = on ? "Adding the credit line…" : "Preparing the clean photo…";
+    try {
+      const blob = await selectedBlob();
+      shareObjectUrl = URL.createObjectURL(blob);
+      img.src = shareObjectUrl;
+      note.innerHTML = on
+        ? "The footer carries <b>freephoto.uft1.com</b>, so the photo keeps its credit where posted links get flagged."
+        : "Clean photo — the footer is off. Tick the box to put the credit back.";
+      setShareBusy(false);
+    } catch (e) {
+      note.textContent = "Could not prepare the image: " + e.message;
+      setShareBusy(true);
+    }
+  }
 
   async function openShare(job) {
-    const modal = $("shareModal"), img = $("sharePreview"), note = $("shareNote");
-    const copyImg = $("shareCopyImg"), save = $("shareSave"), native = $("shareNative");
+    const modal = $("shareModal");
     shareJob = job;
+    shareRaw = null;
     shareCredited = null;
-    copyImg.disabled = true;
-    save.disabled = true;
-    img.removeAttribute("src");
-    note.textContent = "Preparing the credited copy…";
-    native.classList.toggle("hidden",
-      !(navigator.canShare && navigator.canShare({ files: [new File([new Blob()], "x.png", { type: "image/png" })] })));
+    shareBuilding = null;
+    $("shareCredit").checked = creditOn();
+    $("sharePreview").removeAttribute("src");
+    $("shareNote").textContent = "Preparing…";
+    $("shareNative").classList.toggle("hidden", !canShareFiles());
+    setShareBusy(true);
     if (typeof modal.showModal === "function") { if (!modal.open) modal.showModal(); }
     else modal.setAttribute("open", "");
     try {
       const blob = await (shareBlobs.get(job.job_id)
         || fetch(resultUrl(job.image_url)).then((r) => (r.ok ? r.blob() : null)));
       if (!blob) throw new Error("could not load the photo");
-      await document.fonts.ready.catch(() => {}); // footer uses the site fonts
-      shareCredited = await creditedBlob(job.job_id, blob);
-      if (shareObjectUrl) URL.revokeObjectURL(shareObjectUrl);
-      shareObjectUrl = URL.createObjectURL(shareCredited);
-      img.src = shareObjectUrl;
-      note.innerHTML = shareNoteText();
-      copyImg.disabled = false;
-      save.disabled = false;
+      shareRaw = blob;
+      await document.fonts.ready.catch(() => {}); // the footer uses the site fonts
+      await showSelected();
     } catch (e) {
-      note.textContent = "Could not prepare the image: " + e.message;
+      $("shareNote").textContent = "Could not prepare the image: " + e.message;
     }
   }
 
@@ -635,31 +674,35 @@
     if (typeof modal.close === "function") modal.close();
     else modal.removeAttribute("open");
     if (shareObjectUrl) { URL.revokeObjectURL(shareObjectUrl); shareObjectUrl = null; }
+    shareRaw = null;
     shareCredited = null;
+    shareBuilding = null;
+    $("sharePreview").removeAttribute("src");
   }
 
   $("shareClose").onclick = closeShare;
-  $("shareModal").addEventListener("close", () => {
-    if (shareObjectUrl) { URL.revokeObjectURL(shareObjectUrl); shareObjectUrl = null; }
-    shareCredited = null;
-    $("sharePreview").removeAttribute("src");
-  });
+  $("shareCredit").onchange = () => {
+    try { localStorage.setItem(CREDIT_KEY, $("shareCredit").checked ? "1" : "0"); } catch (e) { /* private mode */ }
+    if (shareRaw) showSelected();
+  };
+  $("shareModal").addEventListener("close", closeShare);
   $("shareModal").addEventListener("click", (e) => {
     if (e.target === $("shareModal")) closeShare(); // backdrop click
   });
   $("shareCopyImg").onclick = async () => {
     const note = $("shareNote");
     try {
-      if (!shareCredited) throw new Error("still preparing");
+      const blob = await selectedBlob();
       if (typeof ClipboardItem === "undefined") throw new Error("no image clipboard");
-      await navigator.clipboard.write([new ClipboardItem({ "image/png": shareCredited })]);
+      await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
       note.textContent = "Image copied — paste it into a post or a chat.";
     } catch (e) {
       note.textContent = "Copy was blocked. Right-click the image (long-press on a phone) and choose Copy image.";
     }
   };
-  $("shareSave").onclick = () => {
-    if (shareCredited) saveBlob(shareCredited, shareName());
+  $("shareSave").onclick = async () => {
+    try { saveBlob(await selectedBlob(), shareName()); }
+    catch (e) { $("shareNote").textContent = "Could not save: " + e.message; }
   };
   $("shareCopyLink").onclick = async () => {
     const url = location.origin + "/";
@@ -671,9 +714,9 @@
     }
   };
   $("shareNative").onclick = async () => {
-    if (!shareCredited) return;
-    const file = new File([shareCredited], shareName(), { type: "image/png" });
     try {
+      const blob = await selectedBlob();
+      const file = new File([blob], shareName(), { type: "image/png" });
       await Promise.race([
         navigator.share({ files: [file], text: "Edited with Free Photo Edit" }),
         new Promise((_, reject) => setTimeout(
@@ -683,7 +726,7 @@
       closeShare();
     } catch (e) {
       if (e.name === "AbortError") return; // user closed the sheet
-      $("shareSave").click();
+      try { saveBlob(await selectedBlob(), shareName()); } catch (_) { /* already reported */ }
       $("shareNote").textContent = "The share sheet did not open — saved the PNG instead.";
     }
   };
@@ -840,7 +883,7 @@
       card.appendChild(panel);
       const note = document.createElement("p");
       note.className = "muted";
-      note.textContent = "Share opens the credited copy to copy or save. Download is the clean photo, no text added.";
+      note.textContent = "Share gives you the photo to copy or save, with a credit line you can keep or drop. Download is always clean.";
       card.appendChild(note);
     } else if (j.status === "failed") {
       const p = document.createElement("p");
