@@ -69,7 +69,9 @@
   // Inline icons from icons.svg — the site uses no emoji.
   const PRESET_ICONS = { background: "i-landscape", clothes: "i-shirt", restore: "i-sparkles", custom: "i-pencil" };
   function ico(name) {
-    return '<svg class="ico" aria-hidden="true"><use href="icons.svg#' + name + '"></use></svg>';
+    // ?v=2 busts the sprite cache so a new symbol (i-link) is not blank
+    // for browsers holding the old icons.svg.
+    return '<svg class="ico" aria-hidden="true"><use href="icons.svg?v=2#' + name + '"></use></svg>';
   }
   function plain(text) {
     return String(text || "").replace(/[\p{Extended_Pictographic}\uFE0F]/gu, "").trim();
@@ -698,6 +700,25 @@
         }
       };
       row.appendChild(sh);
+      // The photo share keeps the address inside the image, which is what
+      // survives a group that flags posted links. This is the explicit way to
+      // get the address itself, for DMs and places where a link is fine.
+      const copy = document.createElement("button");
+      copy.type = "button";
+      copy.className = "dl";
+      copy.innerHTML = ico("i-link") + " Copy link";
+      copy.onclick = async () => {
+        const url = location.origin + "/";
+        try {
+          await navigator.clipboard.writeText(url);
+          setStatus("Link copied — " + url);
+          copy.innerHTML = ico("i-check") + " Copied";
+          setTimeout(() => { copy.innerHTML = ico("i-link") + " Copy link"; }, 2000);
+        } catch (e) {
+          setStatus("Your browser blocked the clipboard. The link is " + url, true);
+        }
+      };
+      row.appendChild(copy);
       // Voluntary correction: re-edit the finished photo from plain text. No
       // chat model — the user's sentence goes straight to the engine, and the
       // result above is the only input.
