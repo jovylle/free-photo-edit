@@ -47,9 +47,23 @@ import httpx
 
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
-from .credits import DailyLimitReached, FREE_CREDITS, CreditsStore, OutOfCredits
-from .cleanup import artifacts_expired, sweep, SWEEP_INTERVAL_SECONDS
-from .engines import EngineError, select_engine
+from .cleanup import (
+    RECOVERY_INTERVAL_SECONDS,
+    SWEEP_INTERVAL_SECONDS,
+    artifacts_expired,
+    recover_stuck,
+    sweep,
+)
+from .credits import DailyLimitReached, CreditsStore, OutOfCredits
+from .engines import select_engine
+from .events import (
+    ALLOWED_EVENTS,
+    EVENT_PATH_MAX,
+    EventsStore,
+    Stats,
+    clean_label,
+    event_device,
+)
 from .prompts import PRESETS, build_edit_prompt, resolve_preset
 
 API_DIR = Path(__file__).resolve().parent
@@ -71,15 +85,28 @@ async def lifespan(app):
     storage = STORAGE
     stop = threading.Event()
 
-    def run_sweep():
+    def run_sweep() -> None:
         try:
             sweep(store, storage)
         except Exception:
             logging.getLogger(__name__).exception("TTL sweep failed; retry next hour")
 
-    def periodic():
-        while not stop.wait(SWEEP_INTERVAL_SECONDS):
-            run_sweep()
+    def run_recovery() -> None:
+        try:
+            recover_stuck(store)
+        except Exception:
+            logging.getLogger(__name__).exception(
+                "stuck-job recovery failed; retry next minute")
+
+    def periodic() -> None:
+        # One thread, two cadences: recovery every minute, sweep hourly.
+        tick = min(RECOVERY_INTERVAL_SECONDS, SWEEP_INTERVAL_SECONDS)
+        next_sweep = time.monotonic() + SWEEP_INTERVAL_SECONDS
+        while not stop.wait(tick):
+            run_recovery()
+            if time.monotonic() >= next_sweep:
+                run_sweep()
+                next_sweep = time.monotonic() + SWEEP_INTERVAL_SECONDS
 
     await asyncio.to_thread(run_sweep)
     worker = threading.Thread(target=periodic, name="fpe-storage-ttl", daemon=True)
@@ -105,6 +132,10 @@ IP_DAILY_LIMIT = int(os.environ.get("IP_DAILY_LIMIT", "24"))
 # UA is spoofable — fine for a generosity cap, not security.
 DEVICE_DAILY_LIMIT = int(os.environ.get("DEVICE_DAILY_LIMIT", "12"))
 MAX_DAILY_EDITS = int(os.environ.get("MAX_DAILY_EDITS", "60"))
+# Analytics beacons: a tiny JSON body and a generous per-device ceiling, so a
+# single page load (page_view + upload + submit + success) never trips it.
+EVENT_MAX_BYTES = 1024
+EVENT_MINUTE_LIMIT = int(os.environ.get("EVENT_MINUTE_LIMIT", "60"))
 
 TURNSTILE_SITEKEY = os.environ.get("TURNSTILE_SITEKEY", "")
 TURNSTILE_SECRET = os.environ.get("TURNSTILE_SECRET", "")
@@ -309,6 +340,27 @@ def reset_store_for_tests(path: str) -> CreditsStore:
         return _store
 
 
+_events: EventsStore | None = None
+_events_lock = threading.Lock()
+
+
+def get_events() -> EventsStore:
+    global _events
+    if _events is None:
+        with _events_lock:
+            if _events is None:
+                _events = EventsStore(DB_PATH)
+    return _events
+
+
+def reset_events_for_tests(path: str) -> EventsStore:
+    """Test hook: swap the analytics store for a tmp-path DB."""
+    global _events
+    with _events_lock:
+        _events = EventsStore(path)
+        return _events
+
+
 def current_user(
     x_user: str | None = Header(default=None),
     user: str | None = Query(default=None),
@@ -372,6 +424,49 @@ def metrics() -> Response:
         f'photoedit_revision_info{{revision="{_prom_label(_revision())}"}} 1',
     ]
     return Response("\n".join(lines) + "\n", media_type="text/plain; version=0.0.4")
+
+
+@app.post("/api/event", status_code=204)
+async def event(request: Request) -> None:
+    """Anonymous funnel beacon: allowlisted name, capped body, hashed device.
+
+    Fail-soft by design — an analytics write must never affect an edit.
+    """
+    raw = bytearray()
+    async for chunk in request.stream():
+        raw.extend(chunk)
+        if len(raw) > EVENT_MAX_BYTES:
+            raise HTTPException(413, "event too large")
+    try:
+        payload = json.loads(bytes(raw))
+    except (ValueError, TypeError):
+        raise HTTPException(400, "bad payload") from None
+    if not isinstance(payload, dict):
+        raise HTTPException(400, "bad payload")
+    name = str(payload.get("name") or "").strip()
+    if name not in ALLOWED_EVENTS:
+        raise HTTPException(400, "unknown event")
+    preset = str(payload.get("preset") or "").strip().lower()
+    if preset not in ALLOWED_PRESETS:
+        preset = ""  # only known presets are counted, so free text is dropped
+    device = event_device(_client_ip(request),
+                          request.headers.get("User-Agent", ""))
+    now = time.time()
+    store = get_events()
+    if store.count_since(device, now - 60) >= EVENT_MINUTE_LIMIT:
+        raise HTTPException(429, "too many events",
+                            headers={"Retry-After": "60"})
+    try:
+        store.record(name, path=clean_label(payload.get("path"), EVENT_PATH_MAX),
+                     preset=preset, device=device, ts=now)
+    except Exception:
+        logging.getLogger(__name__).warning("event write failed", exc_info=True)
+
+
+@app.get("/api/stats")
+def stats(days: int = 30) -> Stats:
+    """Aggregate funnel only — no device, IP or per-row data."""
+    return get_events().stats(days)
 
 
 @app.get("/api/presets")

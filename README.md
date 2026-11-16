@@ -116,6 +116,7 @@ Environment variables, loaded from the gitignored `.env` at the repo root. Never
 | `IP_DAILY_LIMIT` | `24` | Submissions per rolling 24 h per IP |
 | `DEVICE_DAILY_LIMIT` | `12` | Submissions per rolling 24 h per IP+UA |
 | `MAX_DAILY_EDITS` | `60` | Global submissions per rolling 24 h |
+| `STUCK_JOB_SECONDS` | `900` | A `running` job older than this is failed and refunded |
 | `TURNSTILE_SITEKEY`, `TURNSTILE_SECRET` | empty | Public widget key / verifier secret; blank secret disables the check |
 | `TURNSTILE_HOSTNAMES` | empty | Comma-separated hostnames accepted by siteverify |
 | `XENDIT_SECRET_KEY`, `XENDIT_WEBHOOK_TOKEN` | empty | Payment sessions key / static callback token |
@@ -139,6 +140,8 @@ Relative overrides resolve from the server working directory. Keep the ledger an
 Artifacts live at `api/storage/<job_id>/input_<n>.<ext>` and `output.png`; the ledger is `api/credits.db` with `users`, `jobs` and `payments` tables.
 
 Artifacts expire **seven days after a job first becomes `done` or `failed`** (`terminal_at + 604800`, inclusive); submission time and file mtime do not matter. A sweep runs at startup and hourly in one background thread and removes only the known artifact filenames of expired, ledger-backed terminal jobs, then the empty job directory. Running jobs, orphan directories, unknown files, nested directories and symlinks are left alone, using descriptor-relative no-follow access.
+
+The same background thread also checks every minute for jobs stuck in `running`: one older than `STUCK_JOB_SECONDS` (default 15 minutes) is marked `failed` with error `timed out` and its credit is refunded. The transition is conditional on the job still being `running`, so a job that finishes concurrently is never refunded twice.
 
 Expiry is enforced by time even before deletion succeeds: the poll and history stay HTTP 200 with the original status, `artifacts_expired: true`, a null `image_url` and empty `inputs`, while both artifact routes return **410 Gone**. Expired history is labelled and its compare/download controls are hidden.
 
@@ -175,7 +178,7 @@ scripts/check.sh
 
 ## Status and known gaps
 
-- **No startup recovery.** Process death strands `running` jobs: they stay running forever, the credit is not refunded, and the sweep never touches them.
+- **No recovery while the process is down.** A killed process leaves its `running` jobs alone until the service is running again; the first minute of the background loop then fails and refunds them. If the process never comes back, nothing recovers them.
 - **Single worker only.** Job slots and checkout throttles are in-process semaphores and dictionaries; multiple uvicorn workers multiply the 3-per-IP and 6-global limits instead of sharing them, and SQLite is not built for concurrent writers across processes.
 - **Turnstile hostname allowlist.** Verification needs a non-empty `TURNSTILE_HOSTNAMES` and an exact match, listed both in the env var and the Turnstile dashboard; any mismatch fails closed with 403.
 - **Artifacts are bearer-access by job ID.** No ownership check on `/api/result/{job_id}/file` or `/input/{n}`, so a leaked ID is a leaked photo.

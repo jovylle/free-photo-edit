@@ -13,8 +13,9 @@ photo back. FastAPI serves both the JSON API and the static UI. Free tiers only.
 |---|---|
 | `api/prompts.py` | Preset → prompt templates, identity invariants |
 | `api/credits.py` | SQLite ledger (`users`, `jobs`), atomic debit + refund |
+| `api/events.py` | Anonymous funnel counters (`events` table), aggregate reads only |
 | `api/engines.py` | Image-edit providers behind `Engine.edit() -> png bytes` |
-| `api/cleanup.py` | Expiry sweep of job artifacts |
+| `api/cleanup.py` | Artifact expiry sweep and stuck-job recovery |
 | `api/server.py` | FastAPI app, routes, slots, background job thread |
 | `api/probe_live.py` | Manual live-provider probe, never part of the app |
 | `web/` | Static UI (HTML/CSS/JS), talks to same-origin `/api/*` only |
@@ -28,7 +29,8 @@ L3  api/test_*.py, api/probe_live.py      anything below
 L2  api/server.py                         L1 + L0
 L1  api/cleanup.py                        credits
     api/engines.py                        prompts
-L0  api/prompts.py, api/credits.py        nothing inside the package
+L0  api/prompts.py, api/credits.py,       nothing inside the package
+    api/events.py
 ```
 
 ```mermaid
@@ -36,6 +38,7 @@ graph TD
   server --> cleanup
   server --> engines
   server --> credits
+  server --> events
   server --> prompts
   cleanup --> credits
   engines --> prompts
@@ -43,6 +46,7 @@ graph TD
   tests --> server
   tests --> engines
   tests --> credits
+  tests --> events
   tests --> prompts
   tests --> cleanup
 ```
@@ -53,6 +57,7 @@ graph TD
 - Provider call → `api/engines.py`, behind the existing engine interface.
 - Prompt/preset wording → `api/prompts.py`.
 - Quota or debit logic → `api/credits.py`.
+- Funnel counters → `api/events.py`; it only ever reads aggregates.
 - Browser code → `web/app.js`; no secrets, no absolute API host.
 - A **new** `api/` module is an architecture change: assign it a layer in
   `scripts/structure.py`, add it to the table above, then pass `check`.

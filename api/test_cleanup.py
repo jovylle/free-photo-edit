@@ -216,3 +216,96 @@ def test_terminal_clock_is_stable_and_running_has_no_expiry(tmp_path, monkeypatc
         store.complete("failed")
     assert store.get_job("failed")["terminal_at"] == 200.0
     assert store.user_jobs("u")[0]["terminal_at"] == 200.0
+
+
+def _age_job(store: CreditsStore, job_id: str, created_at: float) -> None:
+    store._db.execute("UPDATE jobs SET created_at=? WHERE id=?", (created_at, job_id))
+    store._db.commit()
+
+
+def test_stuck_running_job_failed_and_refunded(tmp_path: Path,
+                                               monkeypatch: pytest.MonkeyPatch) -> None:
+    from free_photo_edit_api import cleanup
+    store = CreditsStore(str(tmp_path / "ledger.db"))
+    monkeypatch.setattr(cleanup, "STUCK_JOB_SECONDS", 900)
+    store.check_and_debit("u", "stuck", ip="ip")
+    _age_job(store, "stuck", 1000.0 - 901)
+    assert cleanup.recover_stuck(store, now=1000.0) == 1
+    job = store.get_job("stuck")
+    assert job is not None
+    assert job["status"] == "failed"
+    assert job["error"] == "timed out"
+    assert job["terminal_at"] is not None
+    assert store.balance("u") == 5
+    # Second pass finds nothing stale and never refunds again.
+    assert cleanup.recover_stuck(store, now=1000.0) == 0
+    assert store.balance("u") == 5
+
+
+def test_fresh_running_job_left_alone(tmp_path: Path,
+                                      monkeypatch: pytest.MonkeyPatch) -> None:
+    from free_photo_edit_api import cleanup
+    store = CreditsStore(str(tmp_path / "ledger.db"))
+    monkeypatch.setattr(cleanup, "STUCK_JOB_SECONDS", 900)
+    store.check_and_debit("u", "fresh", ip="ip")
+    _age_job(store, "fresh", 1000.0 - 899)
+    assert cleanup.recover_stuck(store, now=1000.0) == 0
+    assert store.get_job("fresh")["status"] == "running"
+    assert store.balance("u") == 4
+
+
+def test_finished_job_is_not_refunded(tmp_path: Path,
+                                      monkeypatch: pytest.MonkeyPatch) -> None:
+    from free_photo_edit_api import cleanup
+    store = CreditsStore(str(tmp_path / "ledger.db"))
+    monkeypatch.setattr(cleanup, "STUCK_JOB_SECONDS", 900)
+    store.check_and_debit("u", "finished", ip="ip")
+    store.complete("finished")
+    _age_job(store, "finished", 1000.0 - 901)
+    assert cleanup.recover_stuck(store, now=1000.0) == 0
+    assert store.get_job("finished")["status"] == "done"
+    assert store.balance("u") == 4
+
+
+def test_conditional_update_prevents_double_refund(tmp_path: Path,
+                                                   monkeypatch: pytest.MonkeyPatch) -> None:
+    from free_photo_edit_api import cleanup
+    store = CreditsStore(str(tmp_path / "ledger.db"))
+    monkeypatch.setattr(cleanup, "STUCK_JOB_SECONDS", 900)
+    cutoff = 1000.0 - 900
+    # Completion wins the race: the conditional transition loses, no refund.
+    store.check_and_debit("u", "won", ip="ip")
+    _age_job(store, "won", 10.0)
+    store.complete("won")
+    assert store.refund_stale_job("won", cutoff, "timed out") is False
+    assert store.balance("u") == 4
+    # Recovery wins the race: a late engine failure must not refund again.
+    store.check_and_debit("u", "late", ip="ip")
+    assert store.balance("u") == 3
+    _age_job(store, "late", 10.0)
+    assert cleanup.recover_stuck(store, now=1000.0) == 1
+    assert store.balance("u") == 4
+    store.refund("u", "late", "EngineError: boom")
+    assert store.balance("u") == 4
+    assert store.get_job("late")["status"] == "failed"
+
+
+def test_background_loop_runs_recovery_too(tmp_path: Path,
+                                           monkeypatch: pytest.MonkeyPatch) -> None:
+    import threading
+
+    from fastapi.testclient import TestClient
+    from free_photo_edit_api import server
+    monkeypatch.setattr(server, "STORAGE", tmp_path / "storage")
+    server.reset_store_for_tests(str(tmp_path / "ledger.db"))
+    ran = threading.Event()
+
+    def recover(store: CreditsStore) -> int:
+        ran.set()
+        return 0
+
+    monkeypatch.setattr(server, "recover_stuck", recover)
+    monkeypatch.setattr(server, "SWEEP_INTERVAL_SECONDS", 0.01)
+    monkeypatch.setattr(server, "RECOVERY_INTERVAL_SECONDS", 0.01)
+    with TestClient(server.app):
+        assert ran.wait(2), "stuck-job recovery never ran in the background loop"
