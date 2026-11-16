@@ -21,6 +21,21 @@ The power settings are part of the deployment: `sleep 0`, `disksleep 0`,
 `autorestart 1`, `womp 1`, on AC. If the Mac reboots or loses power, launchd brings the
 service back; a home-internet or tunnel outage is a visible outage with no failover.
 
+## Log rotation
+
+launchd appends to `free-photo-edit.{log,err}` forever and never rotates them.
+Install the copy-truncate rotator (no service restart; rotated copies are capped
+at 7 per log, live files are truncated above 1 MiB):
+
+```bash
+install -m 755 scripts/box/rotate-logs.sh ~/fore/services/free-photo-edit/
+cp scripts/box/com.fore.free-photo-edit-rotate.plist ~/Library/LaunchAgents/
+launchctl bootstrap gui/$UID ~/Library/LaunchAgents/com.fore.free-photo-edit-rotate.plist
+```
+
+Backups are already bounded: `backup.sh` keeps seven `*-daily` snapshots and
+never touches the live ledger or storage.
+
 ## Deploy
 
 ```bash
