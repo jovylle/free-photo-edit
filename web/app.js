@@ -14,6 +14,7 @@
  *   GET  /api/credits?user= -> {credits_left}
  *   GET  /api/packs -> {packs: [{id,label,price,credits}]} (price = centavos)
  *   POST /api/checkout {pack, user} -> {checkout_url, session_id}
+ *   POST /api/event {name, path?, preset?} -> 204 (anonymous funnel beacon)
  */
 (() => {
   "use strict";
@@ -78,6 +79,22 @@
   }
 
   const uq = "?user=" + encodeURIComponent(user);
+
+  // Cookieless product counts: one anonymous beacon per action. No cookies,
+  // no IDs, no prompts or photos. DNT:1 opts out, and a 404 (older backend)
+  // switches it off for the rest of the page load.
+  let analyticsOff = navigator.doNotTrack === "1" || window.doNotTrack === "1";
+  function track(name, extra) {
+    if (analyticsOff) return;
+    try {
+      const body = JSON.stringify({ name: name, path: location.pathname, ...(extra || {}) });
+      if (body.length > 1000) return;
+      fetch(api("/api/event"), {
+        method: "POST", body: body, keepalive: true,
+        headers: { "Content-Type": "application/json" },
+      }).then((r) => { if (r.status === 404) analyticsOff = true; }).catch(() => {});
+    } catch (e) { /* analytics must never break the page */ }
+  }
 
   function setStatus(msg, isError) {
     statusEl.textContent = msg || "";
@@ -257,6 +274,7 @@
       btn.onclick = () => startCheckout(p, btn);
       packsBox.appendChild(btn);
     });
+    track("pack_view");
   }
 
   // success_url carries ?paid=1: poll credits until the webhook lands.
@@ -430,6 +448,7 @@
     files.push(...take);
     renderThumbs();
     saveDraft();
+    track("upload");
     if (over) setStatus("Kept 5 photos — maximum is 5 per edit.", true);
     else setStatus(files.length + (files.length === 1 ? " photo ready." : " photos ready."));
   }
@@ -464,6 +483,14 @@
     }
     if (found.length) { e.preventDefault(); addFiles(found); }
   });
+
+  // Donations: opening the GCash QR or tapping Ko-fi.
+  const donateBox = $("donate");
+  if (donateBox) {
+    donateBox.addEventListener("click", (e) => {
+      if (e.target.closest("#kofiLink, #gcashQr, summary")) track("donate_click");
+    });
+  }
 
   function fmtTime(ts) {
     try { return new Date(ts * 1000).toLocaleString(); }
@@ -523,6 +550,7 @@
         setStatus(j.artifacts_expired ? "Photos expired after seven days. Upload a photo to edit again."
                   : j.status === "done" ? "Done — your edited photo is below."
                                       : "That edit failed — your credit was refunded.", j.status === "failed");
+        track(j.status === "done" ? "success" : "fail", { preset: j.preset });
         refreshCredits();
       }
     } catch (e) { /* next tick */ }
@@ -695,19 +723,21 @@
       const blob = await selectedBlob();
       if (typeof ClipboardItem === "undefined") throw new Error("no image clipboard");
       await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
+      track("share");
       note.textContent = "Image copied — paste it into a post or a chat.";
     } catch (e) {
       note.textContent = "Copy was blocked. Right-click the image (long-press on a phone) and choose Copy image.";
     }
   };
   $("shareSave").onclick = async () => {
-    try { saveBlob(await selectedBlob(), shareName()); }
+    try { saveBlob(await selectedBlob(), shareName()); track("share"); }
     catch (e) { $("shareNote").textContent = "Could not save: " + e.message; }
   };
   $("shareCopyLink").onclick = async () => {
     const url = location.origin + "/";
     try {
       await navigator.clipboard.writeText(url);
+      track("share");
       $("shareNote").textContent = "Link copied — " + url;
     } catch (e) {
       $("shareNote").textContent = "Clipboard blocked. The link is " + url;
@@ -723,6 +753,7 @@
           () => reject(Object.assign(new Error("share sheet did not open"), { name: "TimeoutError" })),
           15000)),
       ]);
+      track("share");
       closeShare();
     } catch (e) {
       if (e.name === "AbortError") return; // user closed the sheet
@@ -861,6 +892,8 @@
           if (problem) { setStatus(problem, true); return; }
           if (r.status !== 202 || !data.job_id) throw new Error(data.detail || ("edit failed: " + r.status));
           setCredits(data.credits_left);
+          track("correction");
+          track("submit", { preset: "custom" });
           runningJobs += 1;
           setStatus("Correction sent — editing…");
           panel.classList.add("hidden");
@@ -970,6 +1003,7 @@
       if (problem) { setStatus(problem, true); return; }
       if (r.status !== 202 || !data.job_id) throw new Error(data.detail || ("edit failed: " + r.status));
       setCredits(data.credits_left);
+      track("submit", { preset: activePreset });
       runningJobs += 1;
       setStatus("");
       formBody.classList.add("hidden"); // photo + prompt kept as-is for retry
@@ -1020,6 +1054,7 @@
     }
   }).catch(() => { /* fresh form */ });
 
+  track("page_view");
   initTurnstile();
   loadPresets();
   refreshCredits();
