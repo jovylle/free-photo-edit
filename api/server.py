@@ -432,11 +432,13 @@ async def event(request: Request) -> None:
 
     Fail-soft by design — an analytics write must never affect an edit.
     """
-    raw = await request.body()
-    if len(raw) > EVENT_MAX_BYTES:
-        raise HTTPException(413, "event too large")
+    raw = bytearray()
+    async for chunk in request.stream():
+        raw.extend(chunk)
+        if len(raw) > EVENT_MAX_BYTES:
+            raise HTTPException(413, "event too large")
     try:
-        payload = json.loads(raw)
+        payload = json.loads(bytes(raw))
     except (ValueError, TypeError):
         raise HTTPException(400, "bad payload") from None
     if not isinstance(payload, dict):
