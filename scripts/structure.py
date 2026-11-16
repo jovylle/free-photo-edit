@@ -28,14 +28,14 @@ PKG = "free_photo_edit_api"
 
 # Lower number = more foundational. An import must point strictly downward.
 LAYERS = {
-    0: ("__init__", "conftest", "prompts", "credits"),
+    0: ("__init__", "conftest", "prompts", "credits", "events"),
     1: ("cleanup", "engines"),
     2: ("server",),
     3: ("probe_live",),  # harness/entrypoint: may import anything
 }
 LAYER = {name: layer for layer, names in LAYERS.items() for name in names}
 
-API_FILES = {f"{name}.py" for name in LAYER} | {"test_abuse.py", "test_async_queue.py", "test_boot.py", "test_cleanup.py", "test_credits.py", "test_edit_contract.py", "test_engines.py", "test_payments.py"}
+API_FILES = {f"{name}.py" for name in LAYER} | {"test_abuse.py", "test_async_queue.py", "test_boot.py", "test_cleanup.py", "test_credits.py", "test_edit_contract.py", "test_engines.py", "test_events.py", "test_payments.py"}
 
 TOP_LEVEL = {
     ".ai", ".github", ".githooks", ".git", "api", "docs", "scripts", "tests", "web",
