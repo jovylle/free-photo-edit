@@ -54,8 +54,8 @@ from .cleanup import (
     recover_stuck,
     sweep,
 )
-from .credits import DailyLimitReached, FREE_CREDITS, CreditsStore, OutOfCredits
-from .engines import EngineError, select_engine
+from .credits import DailyLimitReached, CreditsStore, OutOfCredits
+from .engines import select_engine
 from .events import (
     ALLOWED_EVENTS,
     EVENT_PATH_MAX,
