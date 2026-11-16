@@ -54,7 +54,7 @@ A new `api/` module is an architecture change: add it to `scripts/structure.py` 
 - Do not add a top-level folder or move files between layers without updating `docs/ARCHITECTURE.md` first.
 - Do not put API keys, tokens or absolute backend hosts in `web/` or in git. `.env` stays local.
 - Do not commit, push or deploy unless explicitly asked. Never `git add -A`; name paths.
-- Do not change `deploy.yml` or deploy config as part of a feature change.
+- Do not change deploy config as part of a feature change. The retired homeploy stack is kept in `docs/retired/`.
 - Do not refactor broadly. Stay inside the paths your task names.
 
 ## Conventions
