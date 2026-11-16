@@ -1,4 +1,7 @@
-"""Seven-day terminal-job artifact retention; never prune the ledger."""
+"""Seven-day terminal-job artifact retention and stuck-job recovery.
+
+Files are deleted after seven days; the ledger itself is never pruned.
+"""
 import logging
 import os
 from pathlib import Path
@@ -9,6 +12,9 @@ from .credits import CreditsStore
 
 RETENTION_SECONDS = 7 * 24 * 60 * 60
 SWEEP_INTERVAL_SECONDS = 60 * 60
+STUCK_JOB_SECONDS = int(os.environ.get("STUCK_JOB_SECONDS", str(15 * 60)))
+RECOVERY_INTERVAL_SECONDS = 60
+STUCK_JOB_ERROR = "timed out"
 ARTIFACTS = tuple(f"input_{i}{ext}" for i in range(5)
                   for ext in (".jpg", ".jpeg", ".png", ".webp")) + ("output.png",)
 log = logging.getLogger(__name__)
@@ -19,6 +25,22 @@ def artifacts_expired(job: dict, now: float | None = None) -> bool:
     return (job["status"] in ("done", "failed")
             and job.get("terminal_at") is not None
             and job["terminal_at"] <= now - RETENTION_SECONDS)
+
+
+def recover_stuck(store: CreditsStore, now: float | None = None) -> int:
+    """Fail and refund running jobs older than STUCK_JOB_SECONDS.
+
+    Returns the number recovered; one log line per job, none when idle.
+    """
+    now = time.time() if now is None else now
+    cutoff = now - STUCK_JOB_SECONDS
+    recovered = 0
+    for job_id in store.stale_running_job_ids(cutoff):
+        if store.refund_stale_job(job_id, cutoff, STUCK_JOB_ERROR):
+            log.warning("recovered stuck job %s: failed 'timed out', credit refunded",
+                        job_id)
+            recovered += 1
+    return recovered
 
 
 def sweep(store: CreditsStore, storage: Path, now: float | None = None) -> None:

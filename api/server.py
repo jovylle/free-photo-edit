@@ -48,7 +48,13 @@ import httpx
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 from .credits import DailyLimitReached, FREE_CREDITS, CreditsStore, OutOfCredits
-from .cleanup import artifacts_expired, sweep, SWEEP_INTERVAL_SECONDS
+from .cleanup import (
+    RECOVERY_INTERVAL_SECONDS,
+    SWEEP_INTERVAL_SECONDS,
+    artifacts_expired,
+    recover_stuck,
+    sweep,
+)
 from .engines import EngineError, select_engine
 from .prompts import PRESETS, build_edit_prompt, resolve_preset
 
@@ -71,15 +77,28 @@ async def lifespan(app):
     storage = STORAGE
     stop = threading.Event()
 
-    def run_sweep():
+    def run_sweep() -> None:
         try:
             sweep(store, storage)
         except Exception:
             logging.getLogger(__name__).exception("TTL sweep failed; retry next hour")
 
-    def periodic():
-        while not stop.wait(SWEEP_INTERVAL_SECONDS):
-            run_sweep()
+    def run_recovery() -> None:
+        try:
+            recover_stuck(store)
+        except Exception:
+            logging.getLogger(__name__).exception(
+                "stuck-job recovery failed; retry next minute")
+
+    def periodic() -> None:
+        # One thread, two cadences: recovery every minute, sweep hourly.
+        tick = min(RECOVERY_INTERVAL_SECONDS, SWEEP_INTERVAL_SECONDS)
+        next_sweep = time.monotonic() + SWEEP_INTERVAL_SECONDS
+        while not stop.wait(tick):
+            run_recovery()
+            if time.monotonic() >= next_sweep:
+                run_sweep()
+                next_sweep = time.monotonic() + SWEEP_INTERVAL_SECONDS
 
     await asyncio.to_thread(run_sweep)
     worker = threading.Thread(target=periodic, name="fpe-storage-ttl", daemon=True)

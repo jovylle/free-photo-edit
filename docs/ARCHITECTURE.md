@@ -14,7 +14,7 @@ photo back. FastAPI serves both the JSON API and the static UI. Free tiers only.
 | `api/prompts.py` | Preset → prompt templates, identity invariants |
 | `api/credits.py` | SQLite ledger (`users`, `jobs`), atomic debit + refund |
 | `api/engines.py` | Image-edit providers behind `Engine.edit() -> png bytes` |
-| `api/cleanup.py` | Expiry sweep of job artifacts |
+| `api/cleanup.py` | Artifact expiry sweep and stuck-job recovery |
 | `api/server.py` | FastAPI app, routes, slots, background job thread |
 | `api/probe_live.py` | Manual live-provider probe, never part of the app |
 | `web/` | Static UI (HTML/CSS/JS), talks to same-origin `/api/*` only |

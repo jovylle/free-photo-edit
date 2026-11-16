@@ -4,7 +4,8 @@ Tables: users(id, credits, created_at), jobs(id, user, status, created_at, ...).
 Rule: 1 credit = 1 generation (FREE_CREDITS=3). Check-then-debit happens in
 ONE SQLite transaction (BEGIN IMMEDIATE) so double-submits cannot overspend.
 0-credit requests raise OutOfCredits with zero ledger writes. Engine failures
-call refund() to restore the credit and mark the job failed.
+call refund() to restore the credit and mark the job failed. A running job that
+outlives its timeout is failed and refunded by cleanup.recover_stuck().
 
 Adapted from photo-fusion/api/credits.py (1-photo v1: no admin-key layer,
 no auth_fails table; IP quota enforced at server layer via ip_job_count).
@@ -115,9 +116,18 @@ class CreditsStore:
                 )
                 self._db.commit()
                 return FREE_DAILY
-            paid, free_day, free_used = row
-            free_remaining = FREE_DAILY if free_day != self._today() else max(0, FREE_DAILY - int(free_used or 0))
-            return int(free_remaining) + int(paid or 0)
+            return self._balance_in_txn(user)
+
+    def _balance_in_txn(self, user: str) -> int:
+        """Balance for a user that already has a row; never inserts."""
+        row = self._db.execute(
+            "SELECT paid_credits, free_day, free_used FROM users WHERE id=?", (user,)
+        ).fetchone()
+        if row is None:
+            return FREE_DAILY
+        paid, free_day, free_used = row
+        free_remaining = FREE_DAILY if free_day != self._today() else max(0, FREE_DAILY - int(free_used or 0))
+        return int(free_remaining) + int(paid or 0)
 
     def check_and_debit(self, user: str, job_id: str,
                         preset: str = "custom", ip: str = "", ua: str = "",
@@ -203,52 +213,66 @@ class CreditsStore:
             self._db.commit()
 
     def refund(self, user: str, job_id: str, error: str = "") -> int:
-        """Refund 1 credit after an engine failure. Returns new balance."""
+        """Refund 1 credit after an engine failure. Returns new balance.
+
+        A job that already reached a terminal state was settled by complete(),
+        fail() or stuck-job recovery; refunding it again would mint a credit.
+        """
         with self._lock:
             self._db.execute("BEGIN IMMEDIATE")
             try:
                 job = self._db.execute(
-                    "SELECT free_debit FROM jobs WHERE id=?", (job_id,)
+                    "SELECT status FROM jobs WHERE id=?", (job_id,)
                 ).fetchone()
-                free_debit = int(job[0]) if job else 0
-                row = self._db.execute(
-                    "SELECT paid_credits, free_day, free_used FROM users WHERE id=?", (user,)
-                ).fetchone()
-                if row is None:
-                    self._db.execute(
-                        "INSERT INTO users(id, credits, paid_credits, free_day, free_used, created_at)"
-                        " VALUES(?,?,?,?,?,?)",
-                        (user, 0, 0, self._today(), 0, time.time()),
-                    )
-                    paid, free_day, free_used = 0, self._today(), 0
-                else:
-                    paid, free_day, free_used = row
-                    paid = int(paid or 0)
-                    free_used = int(free_used or 0)
-                if free_debit:
-                    new_free_used = max(0, free_used - 1)
-                    self._db.execute(
-                        "UPDATE users SET free_used=? WHERE id=?", (new_free_used, user)
-                    )
-                else:
-                    self._db.execute(
-                        "UPDATE users SET paid_credits=? WHERE id=?", (paid + 1, user)
-                    )
+                if job is not None and job[0] in ("done", "failed"):
+                    left = self._balance_in_txn(user)
+                    self._db.execute("COMMIT")
+                    return left
+                left = self._refund_locked(user, job_id)
                 self._db.execute(
                     "UPDATE jobs SET status='failed', error=?,"
                     " terminal_at=COALESCE(terminal_at, ?) WHERE id=?",
                     (error[:500], time.time(), job_id),
                 )
                 self._db.execute("COMMIT")
-                if free_debit:
-                    return max(0, FREE_DAILY - new_free_used) + paid
-                return (FREE_DAILY - (0 if free_day != self._today() else free_used)) + paid + 1
+                return left
             except Exception:
                 try:
                     self._db.execute("ROLLBACK")
                 except sqlite3.Error:
                     pass
                 raise
+
+    def _refund_locked(self, user: str, job_id: str) -> int:
+        """Restore the job's credit; caller holds the lock and a transaction."""
+        job = self._db.execute(
+            "SELECT free_debit FROM jobs WHERE id=?", (job_id,)
+        ).fetchone()
+        free_debit = int(job[0]) if job else 0
+        row = self._db.execute(
+            "SELECT paid_credits, free_day, free_used FROM users WHERE id=?", (user,)
+        ).fetchone()
+        if row is None:
+            self._db.execute(
+                "INSERT INTO users(id, credits, paid_credits, free_day, free_used, created_at)"
+                " VALUES(?,?,?,?,?,?)",
+                (user, 0, 0, self._today(), 0, time.time()),
+            )
+            paid, free_day, free_used = 0, self._today(), 0
+        else:
+            paid, free_day, free_used = row
+            paid = int(paid or 0)
+            free_used = int(free_used or 0)
+        if free_debit:
+            new_free_used = max(0, free_used - 1)
+            self._db.execute(
+                "UPDATE users SET free_used=? WHERE id=?", (new_free_used, user)
+            )
+            return max(0, FREE_DAILY - new_free_used) + paid
+        self._db.execute(
+            "UPDATE users SET paid_credits=? WHERE id=?", (paid + 1, user)
+        )
+        return (FREE_DAILY - (0 if free_day != self._today() else free_used)) + paid + 1
 
     def fail(self, job_id: str, error: str = "") -> None:
         """Mark a job failed WITHOUT refund."""
@@ -301,6 +325,47 @@ class CreditsStore:
             return [r[0] for r in self._db.execute(
                 "SELECT id FROM jobs WHERE status IN ('done','failed')"
                 " AND terminal_at<=?", (cutoff,)).fetchall()]
+
+    def stale_running_job_ids(self, cutoff: float) -> list[str]:
+        with self._lock:
+            return [r[0] for r in self._db.execute(
+                "SELECT id FROM jobs WHERE status='running'"
+                " AND created_at<?", (cutoff,)).fetchall()]
+
+    def refund_stale_job(self, job_id: str, cutoff: float,
+                         error: str = "") -> bool:
+        """Fail and refund one stale running job in a single transaction.
+
+        The UPDATE is conditional on still being 'running' (and still older
+        than cutoff), so a job that completed or failed concurrently is left
+        alone and its credit is never refunded twice.
+        """
+        with self._lock:
+            self._db.execute("BEGIN IMMEDIATE")
+            try:
+                row = self._db.execute(
+                    "SELECT user FROM jobs WHERE id=?", (job_id,)
+                ).fetchone()
+                if row is None:
+                    self._db.execute("ROLLBACK")
+                    return False
+                cur = self._db.execute(
+                    "UPDATE jobs SET status='failed', error=?, terminal_at=?"
+                    " WHERE id=? AND status='running' AND created_at<?",
+                    (error[:500], time.time(), job_id, cutoff),
+                )
+                if cur.rowcount != 1:
+                    self._db.execute("ROLLBACK")
+                    return False
+                self._refund_locked(str(row[0]), job_id)
+                self._db.execute("COMMIT")
+                return True
+            except Exception:
+                try:
+                    self._db.execute("ROLLBACK")
+                except sqlite3.Error:
+                    pass
+                raise
 
     def ip_job_count(self, ip: str) -> int:
         """Total jobs ever submitted from one client IP (quota layer)."""
