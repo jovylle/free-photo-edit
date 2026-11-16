@@ -32,6 +32,13 @@ SPIKE outcome (2026-10-11, verified against docs + live probes):
   but zoom-cropped the ID card out; sunburst medium -> full scene kept,
   text readable, 2.64c; sunburst+input_fidelity=high -> 400 (omit it).
   Default is now gpt-image-2.5-sunburst (~2.6c/edit).
+- 2026-11-16: gpt-image-1-mini REJECTED for good, not just defaulted away.
+  Re-probed on a real portrait with the background preset: it runs (1024px,
+  13.8s, ~0.83c, half the price) but redraws the face — freckles, lip and
+  cheek moles and hair edges change. Identity is the product, so the halved
+  cost is not a trade we take. The model stays a hardcoded constant with no
+  env override, so it cannot be selected by configuration; see
+  docs/decisions/0005-no-gpt-image-1-mini.md before revisiting.
 """
 
 from __future__ import annotations
