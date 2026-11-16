@@ -72,15 +72,14 @@ async (page) => {
   assert(polls() === count, 'Polling interval shorter than 10 seconds');
   done = true;
   await page.clock.fastForward(1);
-  await page.locator('#result input[type=range]').waitFor();
-  await page.locator('#result input[type=range]').fill('75');
-  assert((await page.locator('#result .compare-before').getAttribute('style')).includes('25%'), 'Slider does not clip original');
+  await page.locator('#result img[alt="edited result"]').waitFor({state:'attached'});
+  assert(await page.locator('#result .job-thumbs img').count() >= 1, 'Input photo missing above the result');
   const download = page.waitForEvent('download');
   await page.locator('#result button').click();
   assert((await download).suggestedFilename() === 'free-photo-edit-smoke123.png', 'Wrong download');
   assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'Mobile overflow');
   await page.reload();
-  await page.locator('#result input[type=range]').waitFor();
+  await page.locator('#result img[alt="edited result"]').waitFor({state:'attached'});
   done = false;
   await page.reload();
   await page.locator('.job-spin').waitFor({state:'attached'});
@@ -120,7 +119,21 @@ async (page) => {
   const stopped = polls();
   await page.clock.fastForward(20000);
   assert(polls() === stopped, 'Missing job still polled');
+  // Voluntary correction: the finished photo goes back through /api/edit as a
+  // plain custom instruction (no chat model), and the panel is optional.
+  missing = false; done = true; responseStatus = 202;
+  await page.reload();
+  await page.locator('#result img[alt="edited result"]').waitFor({state:'attached'});
+  await page.getByRole('button', {name:'Need a correction?'}).first().click();
+  assert(await page.locator('#result .fix textarea').isVisible(), 'Correction panel did not open');
+  await page.locator('#result .fix textarea').fill('make me look like I am in Paris');
+  const beforeFix = posts.length;
+  await page.getByRole('button', {name:'Send correction'}).click();
+  for (let i = 0; i < 50 && posts.length === beforeFix; i++) await page.waitForTimeout(100);
+  assert(posts.length === beforeFix + 1, 'Correction did not post');
+  assert(posts.at(-1).includes('name="preset"') && posts.at(-1).includes('custom'), 'Correction used the wrong preset');
+  assert(posts.at(-1).includes('make me look like I am in Paris'), 'Correction text was lost');
   await page.unrouteAll({behavior:'wait'});
-  return {passed:true, checks:'mobile layout, presets, multilingual placeholder, empty restore, multipart 202, duplicate-submit guard, 10s polling, slider, download, completed/running resume, 402/403/429/502/503, empty custom, multi-photo rejection, async failure/refund, 404 poll stop, API-only fetch guard', apiRequests:requests.length, submissions:posts.length};
+  return {passed:true, checks:'mobile layout, presets, multilingual placeholder, empty restore, multipart 202, duplicate-submit guard, 10s polling, stacked inputs + result, download, completed/running resume, 402/403/429/502/503, empty custom, multi-photo rejection, async failure/refund, 404 poll stop, correction panel posts a custom re-edit, API-only fetch guard', apiRequests:requests.length, submissions:posts.length};
   } finally { await context.close(); }
 }

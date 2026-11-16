@@ -130,7 +130,7 @@ Relative overrides resolve from the server working directory. Keep the ledger an
 
 - `openai` (default): `images/edits`, model `gpt-image-2.5-sunburst`, 1024×1024, quality `medium`, 1–5 images. `input_fidelity` is deliberately never sent; the key stays server-side. Historical probes estimated roughly 2.6¢/edit — not a current price guarantee and not a dollar cap. Routes record no provider usage or cost, so real spend is visible only in the OpenAI dashboard.
 - `workers-ai`: Cloudflare Workers AI REST, 512×512, 25 steps, one image only. Its live image-input path was reported broken in October 2026 probes and has not been re-verified working. Explicit alternative, never automatic failover.
-- `pollinations`: a stub that raises `501 not-configured`, surfaced as a failed, refunded job. `fake`: dev-only; echoes a PNG so end-to-end runs cost nothing — the Dockerfile and `deploy.yml` select it.
+- `pollinations`: a stub that raises `501 not-configured`, surfaced as a failed, refunded job. `fake`: dev-only; echoes a PNG so end-to-end runs cost nothing — the Dockerfile selects it.
 
 `api/probe_live.py` makes one real call with the selected engine — by default a paid OpenAI call — and bypasses routes, credit accounting and the daily cap. It is a probe, not a route test.
 
@@ -152,7 +152,7 @@ Both shapes serve the same `web/` directory; only the origin differs.
 
 **Split: static frontend, separate API origin.** Publish `web/` as-is on Cloudflare Pages, set the `content` of the `api-base` meta tag in each page to the API origin (empty means same origin), and allow that origin on the API with `CORS_ORIGINS=https://your-frontend.example`. `app.js` prefixes API calls and result URLs with that base, so no host is baked into the code. Without a matching `CORS_ORIGINS` entry the response has no `Access-Control-Allow-Origin` and the browser blocks it. Payment return URLs must be HTTPS on the frontend origin.
 
-**Container.** The `Dockerfile` serves API plus UI on port 8080 with `FREE_PHOTO_EDIT_ENGINE=fake` and data under `/app/data`; override both for anything real and mount `/app/data` as a volume so a redeploy cannot wipe the ledger. `deploy.yml` describes the private dev stack (`free-photo-edit-dev`, `8090:8080`, health check `/api/config`); production rollout goes through the established homeploy workflow, not that file.
+**Container.** The `Dockerfile` serves API plus UI on port 8080 with `FREE_PHOTO_EDIT_ENGINE=fake` and data under `/app/data`; override both for anything real and mount `/app/data` as a volume so a redeploy cannot wipe the ledger. The retired private dev stack (`free-photo-edit-dev`, `8090:8080`) is kept in `docs/retired/deploy-elitedesk-2026-11-16.yml`; its hostnames and container are gone. Production rollout is `sync-live.sh`.
 
 ## Security notes
 

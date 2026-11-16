@@ -6,6 +6,8 @@ SRC=/Volumes/DevSSD/fore/lab/free-photo-edit
 DST=/Users/jovyllebermudez/fore/services/free-photo-edit/app
 rsync -a --delete \
   --exclude='.venv/' --exclude='__pycache__/' --exclude='.pytest_cache/' \
+  --exclude='.ruff_cache/' --exclude='.mypy_cache/' --exclude='*.pyc' \
+  --exclude='.DS_Store' \
   --exclude='.env' --exclude='api/credits.db*' --exclude='api/storage/' \
   "$SRC/" "$DST/"
 launchctl kickstart -k gui/"$(id -u)"/com.fore.free-photo-edit
