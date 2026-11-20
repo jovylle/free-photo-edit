@@ -22,7 +22,8 @@ PRESETS = {
     "restore": (
         "Restore and enhance this photo: remove scratches, noise, blur, and "
         "blemishes, fix faded colors and lighting. Keep the exact same "
-        "subject, face, pose, composition — change NOTHING else."
+        "subject, face, pose, composition — change NOTHING else. "
+        "Keep all clothing and body areas exactly as they appear in the original; do not generate or alter them."
     ),
     "custom": "{detail}",
 }

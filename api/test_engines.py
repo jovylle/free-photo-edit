@@ -6,11 +6,14 @@ from __future__ import annotations
 import base64
 import json
 
+from typing import Any
+
 import pytest
 
 from free_photo_edit_api import prompts
 from free_photo_edit_api.engines import (
     _TINY_PNG,
+    EngineBlocked,
     EngineError,
     FakeEngine,
     OpenAiEngine,
@@ -98,13 +101,13 @@ def test_pollinations_stub_is_501():
 
 
 class JsonResp:
-    def __init__(self, status=200, payload=b""):
+    def __init__(self, status: int = 200, payload: bytes = b"") -> None:
         self.status_code = status
         self.content = payload
         self.text = payload.decode("utf-8", "replace")
 
 
-def _openai(resp=None, api_key="tok123"):
+def _openai(resp: "JsonResp | None" = None, api_key: str = "tok123") -> Any:
     if resp is None:
         img_b64 = base64.b64encode(PNG).decode()
         resp = JsonResp(payload=json.dumps(
@@ -222,10 +225,34 @@ def test_build_prompt_empty_raises():
         prompts.build_edit_prompt("   ")
 
 
-def test_fake_engine_echoes_png_without_provider(monkeypatch):
+def test_fake_engine_echoes_png_without_provider(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("FREE_PHOTO_EDIT_ENGINE", "fake")
     engine = select_engine()
     assert isinstance(engine, FakeEngine)
     assert engine.edit(PNG, "x") == PNG
     assert engine.edit([PNG, PNG], "x") == PNG
     assert engine.edit(b"jpegbytes", "x") == _TINY_PNG
+
+
+def test_openai_moderation_blocked_raises_engine_blocked() -> None:
+    body = json.dumps({"error": {"code": "moderation_blocked",
+                                "moderation_details": {"moderation_stage": "output"}}})
+    eng = _openai(JsonResp(status=400, payload=body.encode()))
+    with pytest.raises(EngineBlocked) as ei:
+        eng.edit(b"img", "do stuff")
+    assert "output" in str(ei.value)
+
+
+def test_openai_invalid_request_raises_engine_error_not_blocked() -> None:
+    body = json.dumps({"error": {"code": "invalid_request"}})
+    eng = _openai(JsonResp(status=400, payload=body.encode()))
+    with pytest.raises(EngineError) as ei:
+        eng.edit(b"img", "do stuff")
+    assert not isinstance(ei.value, EngineBlocked)
+
+
+def test_restore_preset_ends_with_new_sentence() -> None:
+    assert prompts.PRESETS["restore"].endswith(
+        "Keep all clothing and body areas exactly as they appear in the original; "
+        "do not generate or alter them.")
+    assert prompts.PRESETS["restore"].startswith("Restore and enhance this photo")

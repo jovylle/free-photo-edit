@@ -55,7 +55,7 @@ from .cleanup import (
     sweep,
 )
 from .credits import DailyLimitReached, CreditsStore, OutOfCredits
-from .engines import select_engine
+from .engines import EngineBlocked, select_engine
 from .events import (
     ALLOWED_EVENTS,
     EVENT_PATH_MAX,
@@ -782,6 +782,14 @@ def _run_job_thread(job_id: str, user: str, input_bytes: bytes | list[bytes],
             job_dir = STORAGE / job_id
             job_dir.mkdir(parents=True, exist_ok=True)
             (job_dir / "output.png").write_bytes(out_bytes)
+        except EngineBlocked as e:
+            err = f"blocked-photo: {e}"[:500]
+            job = store.get_job(job_id)
+            if job is not None:
+                store.refund(user, job_id, err)
+            else:
+                store.fail(job_id, err)
+            return
         except Exception as e:
             traceback.print_exc()
             err = f"{type(e).__name__}: {e}"[:500]
