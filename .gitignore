@@ -16,5 +16,6 @@ dev-*.png
 e2e-*.png
 user-photo*.png
 
-# generated audit report (regenerate with scripts/audit.sh)
-.ai/metrics.json
+# secrets: never commit env files or their backups
+.env
+.env.bak-*
