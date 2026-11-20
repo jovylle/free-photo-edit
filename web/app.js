@@ -44,6 +44,7 @@
   let thumbUrls = [];
   let draftWrites = Promise.resolve();
   let activePreset = "custom";
+  let injectedSample = ""; // last prompt a chip wrote, so typing is never clobbered
 
   const TS_ACTION = "edit";
   let tsWidgetId = null; // explicit render id (page stays alive: reset per try)
@@ -56,15 +57,21 @@
   }
   const timers = new Map();
 
+  // `sample` is what the chip drops into the box — it is appended to the
+  // server's preset prompt, so it only names the background/garment/detail.
   const PRESET_COPY = {
     background: { label: "New background (required)",
-                  ph: "e.g. beach sunset, blurred city lights at night" },
+                  ph: "e.g. beach sunset, blurred city lights at night",
+                  sample: "beach sa sunset, malambot na ilaw" },
     clothes: { label: "Clothing change (describe it)",
-               ph: "e.g. red dress, barong, formal suit" },
+               ph: "e.g. red dress, barong, formal suit",
+               sample: "eleganteng formal na damit" },
     restore: { label: "Detail (optional — what to fix)",
-               ph: "e.g. fix scratches, ayusin ang kulay" },
+               ph: "e.g. fix scratches, ayusin ang kulay",
+               sample: "ayusin ang gasgas at kupas na kulay" },
     custom: { label: "Instruction (required)",
-              ph: "TL: Gawing formal ang damit. EN: Make the clothes formal. Bisaya: Himog pormal ang sinina." },
+              ph: "TL: Gawing formal ang damit. EN: Make the clothes formal. Bisaya: Himog pormal ang sinina.",
+              sample: "" },
   };
 
   // Inline icons from icons.svg — the site uses no emoji.
@@ -314,6 +321,10 @@
     setBuyStatus(msg);
   }
 
+  function savePrompt() {
+    try { localStorage.setItem(PROMPT_KEY, promptEl.value); } catch (e) { /* private mode */ }
+  }
+
   function selectPreset(id, save = true) {
     activePreset = id;
     [...presetsBox.children].forEach((el) => {
@@ -323,6 +334,14 @@
     const copy = PRESET_COPY[id] || PRESET_COPY.custom;
     promptLabel.textContent = copy.label;
     promptEl.placeholder = copy.ph;
+    // Chips drop their own ready-made prompt (Custom drops nothing), but never
+    // overwrite words the visitor typed. `save` is false on first paint, so a
+    // restored draft is not replaced by a sample.
+    if (save && (!promptEl.value.trim() || promptEl.value === injectedSample)) {
+      injectedSample = copy.sample;
+      promptEl.value = copy.sample;
+      savePrompt();
+    }
     if (save) { try { localStorage.setItem(PRESET_KEY, id); } catch (e) { /* private mode */ } }
   }
 
@@ -1040,9 +1059,7 @@
   });
 
   try { promptEl.value = localStorage.getItem(PROMPT_KEY) || ""; } catch (e) { /* private mode */ }
-  promptEl.addEventListener("input", () => {
-    try { localStorage.setItem(PROMPT_KEY, promptEl.value); } catch (e) { /* no-op */ }
-  });
+  promptEl.addEventListener("input", savePrompt);
   idbGet().then((saved) => {
     if (saved && !draftChanged) {
       const photos = Array.isArray(saved) ? saved : [saved];

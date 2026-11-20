@@ -82,6 +82,10 @@ class EngineError(RuntimeError):
     pass
 
 
+class EngineBlocked(EngineError):
+    """The provider's safety system refused the request, not a transport fault."""
+
+
 class BaseEngine:
     name = "base"
 
@@ -130,7 +134,18 @@ class OpenAiEngine(BaseEngine):
         except Exception as e:
             raise EngineError(f"openai request failed: {type(e).__name__}") from e
         if resp.status_code != 200:
-            snippet = (getattr(resp, "text", "") or "")[:500]
+            body = getattr(resp, "text", "") or ""
+            if resp.status_code == 400 and "moderation_blocked" in body:
+                stage = "unknown"
+                try:
+                    payload = json.loads(body)
+                    err = payload.get("error") or {}
+                    md = err.get("moderation_details") or {}
+                    stage = md.get("moderation_stage") or "unknown"
+                except Exception:
+                    stage = "unknown"
+                raise EngineBlocked(f"openai moderation blocked: {stage}")
+            snippet = body[:500]
             raise EngineError(f"openai error: HTTP {resp.status_code}: {snippet}")
         return self._extract_bytes(resp)
 

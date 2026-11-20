@@ -15,5 +15,4 @@ a { color:var(--link) }
 .page .updated { color:var(--muted); font-size:13px; margin:0 }
 #themeBtn { background:var(--paper-alt); color:var(--link); border:0; border-radius:0px; padding:6px 14px; cursor:pointer; font:inherit; font-size:14px }
 .ico { width:1em; height:1em; display:inline-block; vertical-align:-0.125em; flex:none }
-#themeBtn .ico { margin-right:.4em }
 a:focus-visible, button:focus-visible { outline:3px solid var(--link); outline-offset:3px }

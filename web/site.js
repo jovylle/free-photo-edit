@@ -6,9 +6,14 @@
     const dark = document.documentElement.dataset.theme === "dark";
     const meta = document.querySelector('meta[name="theme-color"]');
     if (meta) meta.setAttribute("content", dark ? "#1a1a20" : "#eeedf5");
-    if (btn) btn.innerHTML =
-      '<svg class="ico" aria-hidden="true"><use href="icons.svg#i-' + (dark ? "sun" : "moon") +
-      '"></use></svg> ' + (dark ? "Light" : "Dark");
+    if (btn) {
+      btn.innerHTML =
+        '<svg class="ico" aria-hidden="true"><use href="icons.svg#i-' + (dark ? "sun" : "moon") +
+        '"></use></svg>';
+      // Icon-only, so the button carries its own name.
+      btn.setAttribute("aria-label", "Switch to " + (dark ? "light" : "dark") + " theme");
+      btn.title = btn.getAttribute("aria-label");
+    }
   };
   paint();
   if (btn) btn.addEventListener("click", () => {

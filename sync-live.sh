@@ -4,6 +4,11 @@
 set -euo pipefail
 SRC=/Volumes/DevSSD/fore/lab/free-photo-edit
 DST=/Users/jovyllebermudez/fore/services/free-photo-edit/app
+# --delete over uncommitted live work destroys the only copy of it (2026-11-20).
+if [ -n "$(git -C "$DST" status --porcelain)" ]; then
+  echo "sync-live: $DST has uncommitted changes — commit and push them first." >&2
+  exit 1
+fi
 rsync -a --delete \
   --exclude='.venv/' --exclude='__pycache__/' --exclude='.pytest_cache/' \
   --exclude='.ruff_cache/' --exclude='.mypy_cache/' --exclude='*.pyc' \
