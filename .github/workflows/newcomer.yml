@@ -1,0 +1,30 @@
+# Copy to .github/workflows/newcomer.yml in any repo you want reviewed.
+# Needs: repo secret OPENCODE_API_KEY. Optional: repo variable BOT_MODEL.
+name: Newcomer review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: newcomer-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  newcomer:
+    # Fork PRs get no secrets, so skip them.
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: jovylle/agent-bots/actions/newcomer@main
+        with:
+          api-key: ${{ secrets.OPENCODE_API_KEY }}
+          github-token: ${{ github.token }}
+          pr-number: ${{ github.event.pull_request.number }}
+          model: ${{ vars.BOT_MODEL }}
