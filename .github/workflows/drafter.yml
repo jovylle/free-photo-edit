@@ -1,0 +1,27 @@
+# Copy to .github/workflows/drafter.yml in any repo that should get plan drafts.
+# Needs: repo secret OPENCODE_API_KEY, and the repo setting
+# "Allow GitHub Actions to create and approve pull requests".
+name: Drafter plan
+
+on:
+  issues:
+    types: [labeled]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  drafter:
+    if: github.event.label.name == 'needs-plan'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: jovylle/agent-bots/actions/drafter@main
+        with:
+          api-key: ${{ secrets.OPENCODE_API_KEY }}
+          github-token: ${{ github.token }}
+          issue-number: ${{ github.event.issue.number }}
+          model: ${{ vars.BOT_MODEL }}
+          base-branch: dev
